@@ -109,13 +109,18 @@ HUB_ENDPOINTS: Dict[str, List[str]] = {
 # --- Helper & Parsing Functions ---
 
 def clean_url(url: str) -> str:
-    """Normalize URL by stripping query parameters and fragments.
+    """Normalize URL by standardizing scheme to https, standardizing host, stripping query/fragments, and lowercasing path.
 
-    >>> clean_url("https://www.planalto.gov.br/ccivil_03/LEIS/L10406.htm#art1")
-    'https://www.planalto.gov.br/ccivil_03/LEIS/L10406.htm'
+    >>> clean_url("http://www.planalto.gov.br/ccivil_03/Decreto-Lei/Del9735.htm#art1")
+    'https://www.planalto.gov.br/ccivil_03/decreto-lei/del9735.htm'
     """
-    parsed = urlparse(url)
-    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    parsed = urlparse(url.strip())
+    scheme = "https" if parsed.scheme.lower() in ("http", "https") else parsed.scheme.lower()
+    netloc = parsed.netloc.lower()
+    if netloc in ("planalto.gov.br", "www.planalto.gov.br"):
+        netloc = "www.planalto.gov.br"
+    path = parsed.path.lower()
+    return f"{scheme}://{netloc}{path}"
 
 
 def is_planalto_ccivil_url(url: str) -> bool:
@@ -198,24 +203,25 @@ def classify_document(url: str) -> str:
 
 
 def create_safe_filename(url: str) -> str:
-    """Generate a collision-free local filename from URL.
+    """Generate a collision-free, canonical lowercase local filename from URL.
 
     >>> create_safe_filename("https://www.planalto.gov.br/ccivil_03/_Ato2023-2026/2024/Lei/L15082.htm")
-    'Ato2023-2026_2024_Lei_L15082.html'
+    'ato2023-2026_2024_lei_l15082.html'
     """
-    parsed = urlparse(url)
+    canonical = clean_url(url)
+    parsed = urlparse(canonical)
     clean_path = parsed.path.strip("/")
-    if clean_path.lower().startswith("ccivil_03/"):
+    if clean_path.startswith("ccivil_03/"):
         clean_path = clean_path[len("ccivil_03/"):]
 
     safe_name = clean_path.replace("/", "_").replace("\\", "_")
-    if not safe_name.lower().endswith(".html") and not safe_name.lower().endswith(".htm"):
+    if not safe_name.endswith(".html") and not safe_name.endswith(".htm"):
         safe_name += ".html"
-    elif safe_name.lower().endswith(".htm"):
+    elif safe_name.endswith(".htm"):
         safe_name = safe_name[:-4] + ".html"
 
     safe_name = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', safe_name)
-    return safe_name
+    return safe_name.lower()
 
 
 def is_institutional_header(text: str) -> bool:
@@ -845,11 +851,14 @@ class PlanaltoScraper:
 
 def run_sanity_checks() -> None:
     """Run inline asserts to validate core logic."""
-    assert clean_url("https://planalto.gov.br/test.htm#section1") == "https://planalto.gov.br/test.htm"
+    assert clean_url("http://planalto.gov.br/TEST.htm#section1") == "https://www.planalto.gov.br/test.htm"
+    assert clean_url("http://www.planalto.gov.br/ccivil_03/Decreto-Lei/Del9735.htm") == "https://www.planalto.gov.br/ccivil_03/decreto-lei/del9735.htm"
+    assert create_safe_filename("http://www.planalto.gov.br/ccivil_03/Decreto-Lei/Del9735.htm") == "decreto-lei_del9735.html"
+    assert create_safe_filename("http://www.planalto.gov.br/ccivil_03/decreto-lei/del9735.htm") == "decreto-lei_del9735.html"
     assert is_planalto_ccivil_url("https://www.planalto.gov.br/ccivil_03/LEIS/L10406.htm") is True
     assert is_planalto_ccivil_url("https://google.com") is False
     assert is_index_or_quadro_url("https://www.planalto.gov.br/ccivil_03/LEIS/_Lei-Ordinaria.htm") is True
-    assert is_index_or_quadro_url("https://www.planalto.gov.br/ccivil_03/LEIS/L10406.htm") is False
+    assert is_index_or_quadro_url("https://www.planalto.gov.br/ccivil_03/LEIS/2002/L10406.htm") is False
     assert classify_document("https://www.planalto.gov.br/ccivil_03/Constituicao/Constituicao.htm") == "constituicao"
     assert classify_document("https://www.planalto.gov.br/ccivil_03/LEIS/LCP/Lcp101.htm") == "leis_complementares"
     assert classify_document("https://www.planalto.gov.br/ccivil_03/LEIS/2002/L10406.htm") == "leis_ordinarias"
@@ -882,7 +891,7 @@ def run_sanity_checks() -> None:
 
     links = extract_in_text_document_links("https://www.planalto.gov.br/ccivil_03/LEIS/2012/Lei/L12706.htm", sample_html)
     assert len(links) == 1
-    assert "L6404consol.htm" in links[0]
+    assert "l6404consol.htm" in links[0].lower()
     print("[✓] All internal sanity checks and metadata extractors passed.")
 
 

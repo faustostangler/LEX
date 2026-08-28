@@ -31,6 +31,8 @@ from tqdm import tqdm
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
+WORKERS = 50
+
 
 # --- Historical Category Mappings ---
 
@@ -252,7 +254,7 @@ def apply_cross_revocation_graph(
 class CorpusClassifierManager:
     """Orchestrates classification, partitioning, file moving, and index generation."""
 
-    def __init__(self, corpus_dir: Path, workers: int = 20):
+    def __init__(self, corpus_dir: Path, workers: int = WORKERS):
         self.corpus_dir = corpus_dir.resolve()
         self.workers = workers
         self.index_csv = self.corpus_dir / "index.csv"
@@ -353,7 +355,7 @@ class CorpusClassifierManager:
         print(f"    - Historical (Inativo): {hist_count} ({hist_count/len(moves)*100:.1f}%)")
 
         if dry_run:
-            print("\n[!] Dry run mode: No files were moved. Pass --move to execute physical moves.")
+            print("\n[!] Dry run mode: No files were moved. Run without --dry-run to execute physical moves.")
             return
 
         # Perform moves
@@ -382,7 +384,7 @@ class CorpusClassifierManager:
         self,
         records: Dict[str, Dict],
         revocation_edges: List[Tuple[str, str, str]],
-        dry_run: bool = True
+        dry_run: bool = False
     ) -> None:
         """Write updated index.csv, index.json, manifest.json and revocation_manifest.json."""
         if dry_run:
@@ -506,10 +508,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="LEX Corpus Classifier & Partitioning Tool")
     parser.add_argument("--corpus-dir", type=str, default=str(Path(__file__).resolve().parent.parent / "docs" / "corpus"),
                         help="Path to docs/corpus directory")
-    parser.add_argument("--move", action="store_true",
-                        help="Execute physical file partition into active/ and historical/ (Default is dry-run)")
-    parser.add_argument("--workers", type=int, default=20,
-                        help="Number of concurrent worker threads (Default: 20)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Run in simulation mode without moving files or updating catalogs (Default is to execute physical moves)")
+    parser.add_argument("--workers", type=int, default=WORKERS,
+                        help=f"Number of concurrent worker threads (Default: {WORKERS})")
     parser.add_argument("--check-only", action="store_true",
                         help="Run sanity check asserts and exit")
     return parser.parse_args()
@@ -529,7 +531,7 @@ def main() -> None:
     records, edges = manager.scan_and_classify_all()
 
     # Step 2: Partition files
-    dry_run = not args.move
+    dry_run = args.dry_run
     manager.partition_files(records, dry_run=dry_run)
 
     # Step 3: Save catalogs
@@ -540,7 +542,7 @@ def main() -> None:
     print(" CORPUS CLASSIFICATION & PARTITION SUMMARY")
     print("=" * 65)
     print(f"Corpus Directory: {corpus_path}")
-    print(f"Mode:             {'PHYSICAL MOVE EXECUTED' if args.move else 'DRY RUN (Simulation)'}")
+    print(f"Mode:             {'DRY RUN (Simulation)' if args.dry_run else 'PHYSICAL MOVE EXECUTED'}")
     print(f"Total Documents:  {len(records)}")
     active_n = sum(1 for r in records.values() if r["status"] == "active")
     hist_n = sum(1 for r in records.values() if r["status"] == "historical")
