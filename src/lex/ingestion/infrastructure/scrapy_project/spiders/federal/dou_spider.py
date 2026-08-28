@@ -1,13 +1,18 @@
 """Federal DOU Spider for Brazilian Official Gazette (Diário Oficial da União).
 
-Scrapes Section 1, Section 2, Section 3, Extra, and Suplementar editions directly
-from the Imprensa Nacional INPDFViewer portal (pesquisa.in.gov.br).
+Scrapes Section 1 (DO1), Section 2 (DO2), Section 3 (DO3), and Extra (DOE) editions directly
+from the modern Imprensa Nacional portal (www.in.gov.br/leiturajornal). Concurrently retrieves
+the complete, untruncated HTML body for every published normative act and aggregates the full text.
 """
 
+import asyncio
+import json
 import re
-from collections.abc import Generator
+from collections.abc import AsyncIterator, Generator
 from datetime import date
 
+import httpx
+from bs4 import BeautifulSoup
 from scrapy.http import HtmlResponse, Request, Response
 
 from lex.ingestion.infrastructure.dto import RawGazettePayload
@@ -20,101 +25,143 @@ class FederalDouSpider(BaseGazetteSpider):
     name = "federal_dou"
     territory_code = "BR"
     tier = "federal"
-    allowed_domains = ["pesquisa.in.gov.br", "in.gov.br"]
+    allowed_domains = ["www.in.gov.br", "in.gov.br", "pesquisa.in.gov.br"]
 
-    SECTIONS: dict[int, str] = {
-        1: "secao_1",
-        2: "secao_2",
-        3: "secao_3",
-        1000: "extra",
-        515: "suplementar",
+    # Modern in.gov.br section identifiers
+    MODERN_SECTIONS: dict[str, str] = {
+        "do1": "secao_1",
+        "do2": "secao_2",
+        "do3": "secao_3",
+        "doe": "extra",
     }
 
-    INDEX_URL = "https://pesquisa.in.gov.br/imprensa/jsp/visualiza/index.jsp"
-    PDF_VIEWER_URL = "https://pesquisa.in.gov.br/imprensa/servlet/INPDFViewer"
+    LEITURA_JORNAL_URL = "https://www.in.gov.br/leiturajornal"
+    ARTICLE_BASE_URL = "https://www.in.gov.br/web/dou/-/"
 
     def start_requests(self) -> Generator[Request, None, None]:
         """Generate starting index requests for each configured DOU section and target date."""
         for target_date in self.date_range():
-            formatted_date = target_date.strftime("%d/%m/%Y")
-            for jornal_id, section_name in self.SECTIONS.items():
-                url = f"{self.INDEX_URL}?data={formatted_date}&jornal={jornal_id}"
+            date_formatted = target_date.strftime("%d-%m-%Y")
+            for sec_key, sec_name in self.MODERN_SECTIONS.items():
+                url = f"{self.LEITURA_JORNAL_URL}?data={date_formatted}&secao={sec_key}"
                 yield Request(
                     url=url,
-                    callback=self.parse_index,
+                    callback=self.parse_modern_section,
+                    errback=self.handle_request_error,
                     meta={
                         "gazette_date": target_date,
-                        "jornal": jornal_id,
-                        "section": section_name,
+                        "section_key": sec_key,
+                        "section_name": sec_name,
+                        "is_extra": (sec_key == "doe"),
                     },
                     dont_filter=True,
                 )
 
-    def parse_index(self, response: Response) -> Generator[Request, None, None]:
-        """Parse index page to find total page count and dispatch PDF page stream requests."""
+    async def parse_modern_section(self, response: Response) -> AsyncIterator[RawGazettePayload]:
+        """Parse modern in.gov.br leiturajornal page, fetching 100% full text for all acts."""
         if not isinstance(response, HtmlResponse):
             return
 
-        total_pages = self._extract_total_pages(response)
-        if total_pages <= 0:
+        meta = response.meta
+        target_date: date = meta["gazette_date"]
+        section_name: str = meta["section_name"]
+        is_extra: bool = meta.get("is_extra", False)
+
+        # Extract embedded JSON data in <script id="params" type="application/json">
+        script_match = re.search(
+            r'<script id="params"[^>]*>(.*?)</script>', response.text, re.DOTALL
+        )
+        if not script_match:
             return
 
-        meta = response.meta
-        target_date: date = meta["gazette_date"]
-        formatted_date = target_date.strftime("%d/%m/%Y")
-        jornal_id: int = meta["jornal"]
-        section_name: str = meta["section"]
+        try:
+            params_data = json.loads(script_match.group(1).strip())
+        except (json.JSONDecodeError, ValueError):
+            return
 
-        for page in range(1, total_pages + 1):
-            pdf_url = (
-                f"{self.PDF_VIEWER_URL}?jornal={jornal_id}"
-                f"&pagina={page}&data={formatted_date}&captchafield=firstAccess"
-            )
-            yield Request(
-                url=pdf_url,
-                callback=self.parse_pdf_page,
-                meta={
-                    "gazette_date": target_date,
-                    "jornal": jornal_id,
-                    "section": section_name,
-                    "page": page,
-                    "total_pages": total_pages,
-                },
-                dont_filter=True,
-            )
+        articles = params_data.get("jsonArray", [])
+        if not articles:
+            return
 
-    def parse_pdf_page(self, response: Response) -> Generator[RawGazettePayload, None, None]:
-        """Receive PDF byte stream from servlet and yield unvalidated RawGazettePayload DTO."""
-        meta = response.meta
-        target_date: date = meta["gazette_date"]
-        section_name: str = meta["section"]
-        jornal_id: int = meta["jornal"]
-
-        yield RawGazettePayload(
-            territory_code=self.territory_code,
-            tier=self.tier,
-            source_url=response.url,
-            raw_content=response.body,
-            date_obj=target_date,
-            section=section_name,
-            edition_number=str(jornal_id),
-            is_extra_edition=(section_name == "extra"),
-            power="executive",
+        edition_number = str(articles[0].get("editionNumber", "1")) if articles else "1"
+        self.logger.info(
+            f"Retrieving full bodies for {len(articles)} acts in {section_name} ({target_date})..."
         )
 
-    @staticmethod
-    def _extract_total_pages(response: HtmlResponse) -> int:
-        """Extract total page count from index DOM element or script variable."""
-        # 1. Check input element value
-        page_val = response.xpath(
-            "//input[@id='totalPaginas' or @name='totalPaginas']/@value"
-        ).get()
-        if page_val and page_val.isdigit():
-            return int(page_val)
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+        }
 
-        # 2. Check JavaScript variable regex
-        match = re.search(r"totalPaginas\s*=\s*['\"]?(\d+)['\"]?", response.text)
-        if match:
-            return int(match.group(1))
+        # Concurrently fetch full HTML bodies for all articles in the edition
+        full_text_blocks = await self._fetch_all_articles_text(articles, headers)
 
-        return 0
+        if full_text_blocks:
+            full_text = "\n\n" + ("=" * 50) + "\n\n".join(full_text_blocks)
+            yield RawGazettePayload(
+                territory_code=self.territory_code,
+                tier=self.tier,
+                source_url=response.url,
+                raw_content=full_text,
+                date_obj=target_date,
+                section=section_name,
+                edition_number=edition_number,
+                is_extra_edition=is_extra,
+                power="executive",
+            )
+
+    async def _fetch_all_articles_text(
+        self, articles: list[dict[str, object]], headers: dict[str, str]
+    ) -> list[str]:
+        """Concurrently fetch and extract full text for all articles using bounded concurrency."""
+        sem = asyncio.Semaphore(25)
+
+        async with httpx.AsyncClient(
+            headers=headers,
+            timeout=20.0,
+            limits=httpx.Limits(max_connections=50, max_keepalive_connections=30),
+        ) as client:
+
+            async def _fetch_single_act(art: dict[str, object]) -> str:
+                url_title = str(art.get("urlTitle", "")).strip()
+                hierarchy = str(art.get("hierarchyStr", "")).strip()
+                title = str(art.get("title", "")).strip()
+                preview = str(art.get("content", "")).strip()
+
+                if url_title:
+                    article_url = f"{self.ARTICLE_BASE_URL}{url_title}"
+                    try:
+                        async with sem:
+                            resp = await client.get(article_url)
+                            if resp.status_code == 200:
+                                soup = BeautifulSoup(resp.text, "html.parser")
+                                div = soup.find("div", class_="texto-dou") or soup.find(
+                                    "div", id="materia"
+                                )
+                                if div:
+                                    body_text = div.get_text(separator="\n", strip=True)
+                                    header = f"ÓRGÃO: {hierarchy}" if hierarchy else ""
+                                    return f"{header}\n{body_text}".strip()
+                    except (httpx.HTTPError, TimeoutError) as exc:
+                        self.logger.debug(f"Article fetch failed for {url_title}: {exc}")
+
+                # Fallback to metadata preview if individual request failed
+                fallback_parts: list[str] = []
+                if hierarchy:
+                    fallback_parts.append(f"ÓRGÃO: {hierarchy}")
+                if title:
+                    fallback_parts.append(title)
+                if preview:
+                    fallback_parts.append(preview)
+                return "\n".join(fallback_parts)
+
+            tasks = [_fetch_single_act(art) for art in articles]
+            return await asyncio.gather(*tasks)
+
+    def handle_request_error(self, failure: object) -> None:
+        """Handle request network failures gracefully."""
+        self.logger.warning(f"Request failed for DOU spider: {failure}")

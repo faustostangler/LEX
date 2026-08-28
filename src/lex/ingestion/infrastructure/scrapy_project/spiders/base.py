@@ -1,14 +1,15 @@
 """Base Gazette Spider for Brazilian Ingestion Architecture.
 
-Establishes common date range iteration, parameter parsing, and metadata contracts
-for all federal, state, and municipal spiders.
+Establishes common date range iteration, parameter parsing, metadata contracts,
+and Scrapy 2.18+ async start() entrypoints for all federal, state, and municipal spiders.
 """
 
-from collections.abc import Generator
+from collections.abc import AsyncIterator, Generator
 from datetime import date, datetime, timedelta
 from typing import Any
 
 import scrapy
+from scrapy.http import Request
 
 
 class BaseGazetteSpider(scrapy.Spider):
@@ -57,3 +58,12 @@ class BaseGazetteSpider(scrapy.Spider):
         while current <= self.end_date:
             yield current
             current += timedelta(days=1)
+
+    def start_requests(self) -> Generator[Request, None, None]:
+        """Generate starting requests (overridden by concrete spiders)."""
+        yield from ()
+
+    async def start(self) -> AsyncIterator[Request]:
+        """Scrapy 2.18+ async start entrypoint bridging to start_requests generator."""
+        for req in self.start_requests():
+            yield req

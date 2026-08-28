@@ -32,4 +32,4 @@ class TestLexSettings:
         monkeypatch.delenv("LEX_DATABASE_URL", raising=False)
 
         with pytest.raises(ValidationError, match="LEX_DATABASE_URL must be defined"):
-            LexSettings()
+            LexSettings(database_url=None)

@@ -18,6 +18,9 @@ dependencies = [
     "httpx>=0.27.0",
 ]
 
+[project.scripts]
+lex = "lex.cli:main"
+
 [dependency-groups]
 dev = [
     "pytest>=8.2.0",
@@ -47,6 +50,8 @@ exclude = [
     "playground",
     ".venv",
     "docs",
+    "mutants",
+    ".mutmut-cache",
 ]
 
 [tool.ruff.lint]
@@ -62,6 +67,9 @@ select = [
     "T20", # flake8-print
 ]
 ignore = ["S101"] # allow assert in tests
+
+[tool.ruff.lint.per-file-ignores]
+"src/lex/cli.py" = ["T201"] # allow print in CLI
 
 [tool.mypy]
 python_version = "3.12"
@@ -87,5 +95,3 @@ ignore_missing_imports = true
 [tool.mutmut]
 source_paths = ["src/lex/ingestion/domain/"]
 tests_dir = ["tests/ingestion/domain/"]
-
-

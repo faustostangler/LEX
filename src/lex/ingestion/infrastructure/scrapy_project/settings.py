@@ -8,15 +8,25 @@ BOT_NAME = "lex_bot"
 
 SPIDER_MODULES = [
     "lex.ingestion.infrastructure.scrapy_project.spiders.federal",
-    "lex.ingestion.infrastructure.scrapy_project.spiders.state",
+    # "lex.ingestion.infrastructure.scrapy_project.spiders.state",  # Refactor queue
 ]
 NEWSPIDER_MODULE = "lex.ingestion.infrastructure.scrapy_project.spiders.federal"
 
-# Responsible Identification for Public Administration transparency
+# Realistic browser headers for Brazilian public portals & CDNs (Azion / Cloudflare)
 USER_AGENT = (
-    "LEX-Open-Legislation-Engine/1.0 (+https://github.com/faustostangler/LEX; "
-    "contact: fausto.stangler+lex@gmail.com)"
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36 (LEX Legislation Ingestion Engine; +https://github.com/faustostangler/LEX)"
 )
+
+DEFAULT_REQUEST_HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
+}
 
 ROBOTSTXT_OBEY = False
 

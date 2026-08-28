@@ -6,9 +6,9 @@ government portals, temporarily pausing domain requests to prevent starvation.
 
 import time
 from collections import defaultdict
+from typing import Any
 from urllib.parse import urlparse
 
-from scrapy import Spider
 from scrapy.crawler import Crawler
 from scrapy.exceptions import IgnoreRequest
 from scrapy.http import Request, Response
@@ -56,7 +56,7 @@ class DomainCircuitBreakerMiddleware:
         """Get the current failure count for a domain."""
         return self._failures[domain]
 
-    def process_request(self, request: Request, spider: Spider) -> None:
+    def process_request(self, request: Request, spider: Any = None) -> None:
         """Intercept request and block if the domain circuit is open."""
         domain = self._get_domain(request)
         if self.is_open(domain):
@@ -64,7 +64,9 @@ class DomainCircuitBreakerMiddleware:
                 f"Circuit breaker OPEN for domain '{domain}'. Request dropped during cooldown."
             )
 
-    def process_response(self, request: Request, response: Response, spider: Spider) -> Response:
+    def process_response(
+        self, request: Request, response: Response, spider: Any = None
+    ) -> Response:
         """Track response status codes for rate-limits (429) or service outages (503)."""
         domain = self._get_domain(request)
 
@@ -77,7 +79,7 @@ class DomainCircuitBreakerMiddleware:
 
         return response
 
-    def process_exception(self, request: Request, exception: Exception, spider: Spider) -> None:
+    def process_exception(self, request: Request, exception: Exception, spider: Any = None) -> None:
         """Record network drop or timeout exception."""
         domain = self._get_domain(request)
         self._record_failure(domain)

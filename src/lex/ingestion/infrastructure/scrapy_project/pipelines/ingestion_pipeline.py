@@ -6,7 +6,6 @@ the GazetteMapper Anti-Corruption Layer, and the GazetteRepositoryPort adapter.
 
 from typing import Any
 
-from scrapy import Spider
 from scrapy.crawler import Crawler
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -50,7 +49,7 @@ class GazetteIngestionPipeline:
 
         return cls(repository=repository, mapper=mapper, session=session)
 
-    def process_item(self, item: Any, spider: Spider) -> Any:
+    def process_item(self, item: Any, spider: Any = None) -> Any:
         """Process yielded item through ACL mapper and domain repository."""
         if isinstance(item, RawGazettePayload):
             if self._mapper is not None and self._repository is not None:
@@ -58,7 +57,7 @@ class GazetteIngestionPipeline:
                 self._repository.save(edition)
         return item
 
-    def close_spider(self, spider: Spider) -> None:
+    def close_spider(self, spider: Any = None) -> None:
         """Clean up database session upon spider termination."""
         if self._session is not None:
             self._session.close()
