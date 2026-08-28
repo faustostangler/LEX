@@ -39,7 +39,8 @@ from tqdm import tqdm
 
 BASE_URL = "https://www.planalto.gov.br/ccivil_03/"
 
-DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "docs"
+DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "docs" / "corpus"
+WORKERS = 50
 
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 LEX-Scraper/1.0"
 
@@ -217,6 +218,114 @@ def create_safe_filename(url: str) -> str:
     return safe_name
 
 
+def is_institutional_header(text: str) -> bool:
+    """Check if the text is a governmental layout header rather than an act summary."""
+    if not text:
+        return True
+    low = text.lower()
+    return (
+        "presidência da república" in low
+        or "subchefia para assuntos jurídicos" in low
+        or "secretaria especial para assuntos" in low
+        or "secretaria de assuntos parlamentares" in low
+        or "secretaria-geral" in low
+        or "casa civil" in low
+        or "este texto não substitui" in low
+        or "nota : para procura rápida" in low
+        or "texto para impressão" in low
+        or "para procura rápida de palavras" in low
+        or "clique aqui para" in low
+        or "publicado no dou" in low
+        or text.strip() == "..."
+        or len(text.strip()) < 5
+    )
+
+
+def is_enactment_formula_or_header(text: str) -> bool:
+    """Check if the text is a promulgation formula or title heading rather than ementa."""
+    t_strip = text.strip()
+    return bool(re.match(
+        r'^(?:O\s+PRESIDENTE|A\s+PRESIDENTA|O\s+VICE-PRESIDENTE|O\s+MINISTRO|O\s+DIRETOR|A\s+DIRETORIA|Faço\s+saber|Art\.?\s*\d|CAPÍTULO|TÍTULO|SEÇÃO|EMENDA\s+CONST|DECRETO\s+N|LEI\s+N|MEDIDA\s+PROVIS|PORTARIA\s+N|RESOLUÇÃO\s+N|ATO\s+DECLARAT)',
+        t_strip,
+        re.IGNORECASE
+    ))
+
+
+def extract_ementa_from_soup(soup: BeautifulSoup) -> str:
+    """Extract ementa using cascading heuristics designed for Planalto HTML variations:
+
+    1. 2-column or styled metadata tables (Col 1: Notes/Revocations, Col 2: Ementa).
+    2. Elements with explicit font color #800000 or maroon.
+    3. Paragraphs/Divs with right/justify alignment or lateral margin indentation.
+    4. Text span between date header and enactment formula.
+    5. Action verb matching on opening content blocks.
+    6. Operative sentence extraction for single-paragraph acts (e.g. Atos da Mesa).
+    """
+    # Tier 1: Table analysis (Planalto 2-column or styled metadata tables)
+    for table in soup.find_all("table"):
+        tds = table.find_all("td")
+        if len(tds) >= 2:
+            right_td = re.sub(r"\s+", " ", tds[-1].get_text(separator=" ", strip=True)).strip()
+            if right_td and not is_institutional_header(right_td) and not is_enactment_formula_or_header(right_td):
+                return right_td
+            for td in reversed(tds):
+                txt = re.sub(r"\s+", " ", td.get_text(separator=" ", strip=True)).strip()
+                if txt and not is_institutional_header(txt) and not is_enactment_formula_or_header(txt) and len(txt) > 10:
+                    return txt
+        elif len(tds) == 1:
+            txt = re.sub(r"\s+", " ", tds[0].get_text(separator=" ", strip=True)).strip()
+            if txt and not is_institutional_header(txt) and not is_enactment_formula_or_header(txt) and len(txt) > 10:
+                td_style = (tds[0].get("style") or "") + (tds[0].get("align") or "") + (tds[0].get("width") or "")
+                if any(k in td_style.lower() for k in ["right", "justify", "50%", "40%", "60%"]):
+                    return txt
+
+    # Tier 2: Highlighted Font color (#800000 or maroon)
+    for font_elem in soup.find_all(["font", "span", "p"], attrs={"color": re.compile(r"#?800000|maroon", re.IGNORECASE)}):
+        txt = re.sub(r"\s+", " ", font_elem.get_text(separator=" ", strip=True)).strip()
+        if txt and not is_institutional_header(txt) and not is_enactment_formula_or_header(txt) and len(txt) > 10:
+            return txt
+
+    # Tier 3: Paragraphs / Divs with right or justify alignment or lateral margin indentation
+    for elem in soup.find_all(["p", "div"]):
+        align = (elem.get("align") or "").lower()
+        style = (elem.get("style") or "").lower()
+        if align in ["right", "justify"] or "margin-left" in style or "text-align: right" in style:
+            txt = re.sub(r"\s+", " ", elem.get_text(separator=" ", strip=True)).strip()
+            if txt and not is_institutional_header(txt) and not is_enactment_formula_or_header(txt) and len(txt) > 10:
+                return txt
+
+    # Tier 4: Fallback Regex on text between Date and Enactment Formula
+    text = soup.get_text(separator="\n", strip=True)
+    m = re.search(
+        r'(?:DE\s+\d{1,2}\s+DE\s+[A-ZÇa-zç]+\s+DE\s+(?:18|19|20)\d{2}\.?)\s*[\n\r]+\s*([^\n\r]+?(?:[\n\r]+[^\n\r]+?){0,3}?)(?=\s*[\n\r]+(?:O\s+PRESIDENTE|A\s+PRESIDENTA|O\s+VICE-PRESIDENTE|O\s+MINISTRO|O\s+DIRETOR|A\s+DIRETORIA|Faço\s+saber|resolve:|RESOLVE:|Resolve:|decreta:|DECRETA:|Art\.?\s*1[º\.\s]|Artigo\s+1))',
+        text,
+        re.IGNORECASE,
+    )
+    if m:
+        cand = re.sub(r"\s+", " ", m.group(1)).strip()
+        if cand and not is_institutional_header(cand) and not is_enactment_formula_or_header(cand) and len(cand) > 10:
+            return cand
+
+    # Tier 5: Verb matching on leading elements
+    for elem in soup.find_all(["p", "div", "font"]):
+        txt = re.sub(r"\s+", " ", elem.get_text(separator=" ", strip=True)).strip()
+        if txt and not is_institutional_header(txt) and len(txt) > 15:
+            if re.match(
+                r'^(?:Dispõe\s+sobre|Altera\s+|Abre\s+ao\s+|Abre\s+crédito|Cria\s+|Institui\s+|Declara\s+|Concede\s+|Fixa\s+|Aprova\s+|Denomina\s+|Revoga\s+|Prorroga\s+|Isenta\s+|Regula\s+|Estabelece\s+|Autoriza\s+|Dá\s+nova\s+redação|Define\s+|Reestrutura\s+|Extingue\s+|Homologa\s+|Outorga\s+|Ratifica\s+|Modifica\s+|Dispõe,\s+|Recomenda\s+)',
+                txt,
+                re.IGNORECASE,
+            ):
+                return txt
+
+    # Tier 6: Single-paragraph acts (Atos do Congresso Nacional, Portarias operacionais)
+    for p in soup.find_all("p"):
+        p_txt = re.sub(r"\s+", " ", p.get_text(separator=" ", strip=True)).strip()
+        if p_txt and not is_institutional_header(p_txt) and any(k in p_txt.lower() for k in ["faz saber que", "prorrogada pelo período", "perdeu a eficácia"]):
+            return p_txt[:300]
+
+    return "Sem ementa disponível"
+
+
 def extract_document_metadata(html_text: str, url: str = "", file_path: str = "") -> Dict[str, str]:
     """Extract categorical fields (doc_type, number, date, ementa) from law HTML."""
     soup = BeautifulSoup(html_text, "html.parser")
@@ -270,26 +379,14 @@ def extract_document_metadata(html_text: str, url: str = "", file_path: str = ""
         if yr_m:
             date_iso = f"{yr_m.group(0)}-01-01"
 
-    # Ementa search (table summary td, #800000 font color, or p align)
-    ementa = None
-    table = soup.find("table")
-    if table:
-        tds = table.find_all("td")
-        if len(tds) >= 2:
-            ementa = tds[-1].get_text(separator=" ", strip=True)
-
-    if not ementa:
-        font_elem = soup.find("font", color=re.compile(r"#?800000", re.I)) or soup.find("span", style=re.compile(r"color:\s*#?800000", re.I))
-        if font_elem:
-            ementa = font_elem.get_text(separator=" ", strip=True)
-
-    clean_ementa = re.sub(r"\s+", " ", ementa.strip()) if ementa else "Sem ementa disponível"
+    # Multi-tier ementa extraction
+    ementa = extract_ementa_from_soup(soup)
 
     return {
         "doc_type": doc_type or "OUTROS",
         "number": number or "S/N",
         "date": date_iso or "N/D",
-        "ementa": clean_ementa[:300],
+        "ementa": ementa[:300],
     }
 
 
@@ -365,7 +462,7 @@ class PlanaltoScraper:
     def __init__(
         self,
         output_dir: Path,
-        workers: int = 10,
+        workers: int = WORKERS,
         timeout: int = 15,
         sync_mode: bool = False,
         save_text: bool = False,
@@ -422,37 +519,82 @@ class PlanaltoScraper:
         return links
 
     def crawl_index_pages(self, start_urls: List[str], max_depth: int = 3) -> Set[str]:
-        """Crawl hub index tables recursively to discover all individual law documents."""
+        """Crawl hub index tables concurrently with dynamic tqdm progress bar, ETA, and metrics."""
         queue: List[Tuple[str, int]] = [(url, 0) for url in start_urls]
         discovered_quadros: Set[str] = set()
 
-        print(f"[*] Crawling index hierarchies from {len(start_urls)} seeds (Max depth: {max_depth})...")
+        print(f"[*] Crawling index hierarchies from {len(start_urls)} seeds (Max depth: {max_depth}, Workers: {self.workers})...")
 
-        while queue:
-            current_url, depth = queue.pop(0)
-            if current_url in self.visited_urls:
-                continue
-            self.visited_urls.add(current_url)
+        with tqdm(total=len(queue), desc="Crawling Quadros/Indexes", unit="page") as pbar:
+            while queue:
+                # Fetch a batch of index/quadro URLs concurrently
+                batch_size = min(len(queue), self.workers * 2 if not self.sync_mode else 1)
+                batch = queue[:batch_size]
+                queue = queue[batch_size:]
 
-            if is_index_or_quadro_url(current_url) or depth == 0:
-                discovered_quadros.add(current_url)
-                fetched = fetch_url(current_url, session=self.session, timeout=self.timeout)
-                if not fetched:
+                urls_to_fetch = []
+                for current_url, depth in batch:
+                    if current_url in self.visited_urls:
+                        pbar.update(1)
+                        continue
+                    self.visited_urls.add(current_url)
+
+                    if is_index_or_quadro_url(current_url) or depth == 0:
+                        discovered_quadros.add(current_url)
+                        urls_to_fetch.append((current_url, depth))
+                    else:
+                        self.discovered_laws.add(current_url)
+                        pbar.update(1)
+
+                if not urls_to_fetch:
                     continue
 
-                final_url, content, encoding = fetched
-                extracted = self.extract_links_from_html(final_url, content, encoding)
+                if self.sync_mode or self.workers <= 1:
+                    for current_url, depth in urls_to_fetch:
+                        fetched = fetch_url(current_url, session=self.session, timeout=self.timeout)
+                        pbar.update(1)
+                        if not fetched:
+                            continue
+                        final_url, content, encoding = fetched
+                        extracted = self.extract_links_from_html(final_url, content, encoding)
+                        for link in extracted:
+                            if is_index_or_quadro_url(link):
+                                if depth + 1 <= max_depth and link not in self.visited_urls:
+                                    queue.append((link, depth + 1))
+                                    pbar.total += 1
+                            else:
+                                self.discovered_laws.add(link)
+                else:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=self.workers) as executor:
+                        future_to_item = {
+                            executor.submit(fetch_url, u, timeout=self.timeout): (u, d)
+                            for u, d in urls_to_fetch
+                        }
+                        for future in concurrent.futures.as_completed(future_to_item):
+                            pbar.update(1)
+                            u, depth = future_to_item[future]
+                            try:
+                                fetched = future.result()
+                                if not fetched:
+                                    continue
+                                final_url, content, encoding = fetched
+                                extracted = self.extract_links_from_html(final_url, content, encoding)
+                                for link in extracted:
+                                    if is_index_or_quadro_url(link):
+                                        if depth + 1 <= max_depth and link not in self.visited_urls:
+                                            queue.append((link, depth + 1))
+                                            pbar.total += 1
+                                    else:
+                                        self.discovered_laws.add(link)
+                            except Exception as exc:
+                                logging.debug("Error crawling quadro %s: %s", u, exc)
 
-                for link in extracted:
-                    if is_index_or_quadro_url(link):
-                        if depth + 1 <= max_depth and link not in self.visited_urls:
-                            queue.append((link, depth + 1))
-                    else:
-                        self.discovered_laws.add(link)
-            else:
-                self.discovered_laws.add(current_url)
+                pbar.set_postfix({
+                    "quadros": len(discovered_quadros),
+                    "laws_found": len(self.discovered_laws)
+                })
 
-        print(f"[✓] Index crawl complete: Discovered {len(self.discovered_laws)} law documents across {len(discovered_quadros)} index pages.")
+        print(f"\n[✓] Index crawl complete: Discovered {len(self.discovered_laws)} law documents across {len(discovered_quadros)} index pages.")
         return self.discovered_laws
 
     def process_and_download_document(self, url: str) -> Tuple[Optional[Dict[str, str]], List[str]]:
@@ -593,6 +735,10 @@ class PlanaltoScraper:
                         print(f"[!] ThreadPool issue: {pool_err}. Falling back to sync mode.")
                         self.sync_mode = True
 
+                # Periodic checkpoint save every batch
+                if len(self.processed_records) % 25 == 0 or len(pending_queue) == 0:
+                    self.save_index(list(self.processed_records.values()), silent=True)
+
         # Retry failed items synchronously
         if failed_urls:
             print(f"[*] Retrying {len(failed_urls)} failed downloads synchronously...")
@@ -601,12 +747,12 @@ class PlanaltoScraper:
                 if rec:
                     self.processed_records[u] = rec
 
-        # Save index.csv, index.json, manifest.json
+        # Final save index.csv, index.json, manifest.json
         records_list = list(self.processed_records.values())
         self.save_index(records_list)
         return records_list
 
-    def save_index(self, records: List[Dict[str, str]]) -> None:
+    def save_index(self, records: List[Dict[str, str]], silent: bool = False) -> None:
         """Write index.csv, index.json and manifest.json to docs/ directory."""
         # 1. Save index.csv (Structured catalog with >= 4 columns)
         fieldnames = ["doc_type", "number", "date", "scraped_at", "url", "category", "file_path", "file_size_bytes", "ementa"]
@@ -641,24 +787,22 @@ class PlanaltoScraper:
         with open(self.manifest_file, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2, ensure_ascii=False)
 
-        print(f"\n[✓] Index Catalog Generated:")
-        print(f"    - CSV Index:  {self.index_csv_file} ({len(records)} rows)")
-        print(f"    - JSON Index: {self.index_json_file}")
-        print(f"    - Manifest:   {self.manifest_file}")
+        if not silent:
+            print(f"\n[✓] Index Catalog Generated:")
+            print(f"    - CSV Index:  {self.index_csv_file} ({len(records)} rows)")
+            print(f"    - JSON Index: {self.index_json_file}")
+            print(f"    - Manifest:   {self.manifest_file}")
 
-    def reindex_existing_files(self) -> None:
-        """Scan all existing HTML files in docs/ and build index catalog."""
-        print(f"[*] Re-indexing existing files in {self.output_dir}...")
-        records = []
-        for html_file in self.output_dir.rglob("*.html"):
-            if html_file.name.startswith("_") and "Ato" not in html_file.name:
-                continue
+    def _parse_single_file_for_reindex(self, html_file: Path) -> Optional[Dict[str, str]]:
+        """Parse a single local HTML file to extract metadata."""
+        if html_file.name.startswith("_") and "Ato" not in html_file.name:
+            return None
+        try:
             html_text = html_file.read_text(encoding="utf-8", errors="replace")
             meta = extract_document_metadata(html_text, file_path=html_file.name)
             category = html_file.parent.name
             rel_path = str(html_file.relative_to(self.output_dir))
 
-            # Attempt to extract scraped URL from meta comment
             scraped_url = f"https://www.planalto.gov.br/ccivil_03/{html_file.name}"
             url_match = re.search(r"<!-- Scraped from (https?://[^\s]+) on ([^\s]+) -->", html_text)
             scraped_at = datetime.now(timezone.utc).isoformat()
@@ -666,7 +810,7 @@ class PlanaltoScraper:
                 scraped_url = url_match.group(1)
                 scraped_at = url_match.group(2)
 
-            record = {
+            return {
                 "doc_type": meta["doc_type"],
                 "number": meta["number"],
                 "date": meta["date"],
@@ -678,10 +822,23 @@ class PlanaltoScraper:
                 "ementa": meta["ementa"],
                 "status": "indexed",
             }
-            records.append(record)
+        except Exception as err:
+            logging.debug("Error indexing %s: %s", html_file, err)
+            return None
+
+    def reindex_existing_files(self) -> None:
+        """Scan all existing HTML files in docs/ in parallel and build index catalog."""
+        print(f"[*] Discovering existing HTML files in {self.output_dir}...")
+        all_html_files = [f for f in self.output_dir.rglob("*.html")]
+        print(f"[*] Found {len(all_html_files)} files. Parsing metadata with {self.workers} workers...")
+
+        records = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.workers) as executor:
+            results = list(tqdm(executor.map(self._parse_single_file_for_reindex, all_html_files), total=len(all_html_files), desc="Reindexing Docs", unit="file"))
+            records = [r for r in results if r is not None]
 
         self.save_index(records)
-        print(f"[✓] Re-indexing complete: Indexed {len(records)} local files.")
+        print(f"[✓] Re-indexing complete: Successfully indexed {len(records)} local files.")
 
 
 # --- Self-Validation Sanity Checks ---
@@ -699,8 +856,9 @@ def run_sanity_checks() -> None:
 
     sample_html = """
     <html><body>
+    <table width="70%"><tr><td></td><td>Presidência da República Casa Civil Subchefia para Assuntos Jurídicos</td></tr></table>
     <a href="http://legislacao.planalto.gov.br/">LEI Nº 12.706, DE 8 DE AGOSTO DE 2012.</a>
-    <table><tr><td></td><td>Autoriza a criação da empresa pública AMAZUL</td></tr></table>
+    <table width="100%"><tr><td>Mensagem de veto</td><td>Autoriza a criação da empresa pública AMAZUL</td></tr></table>
     <a href="../../../LEIS/L6404consol.htm">Lei 6.404</a>
     </body></html>
     """
@@ -708,7 +866,19 @@ def run_sanity_checks() -> None:
     assert meta["doc_type"] == "LEI ORDINÁRIA", f"Expected LEI ORDINÁRIA, got {meta['doc_type']}"
     assert meta["number"] == "12.706", f"Expected 12.706, got {meta['number']}"
     assert meta["date"] == "2012-08-08", f"Expected 2012-08-08, got {meta['date']}"
-    assert "AMAZUL" in meta["ementa"], "Expected AMAZUL in ementa"
+    assert "AMAZUL" in meta["ementa"], f"Expected AMAZUL in ementa, got: {meta['ementa']}"
+    assert "Presidência" not in meta["ementa"], f"Institutional header leaked into ementa: {meta['ementa']}"
+
+    # Test font color fallback
+    sample_font_html = """
+    <html><body>
+    <p>DECRETO Nº 5.432, DE 10 DE MAIO DE 2005</p>
+    <font color="#800000">Regulamenta os incentivos fiscais para inovação tecnológica.</font>
+    <p>O PRESIDENTE DA REPÚBLICA decreta...</p>
+    </body></html>
+    """
+    meta_font = extract_document_metadata(sample_font_html)
+    assert "incentivos fiscais" in meta_font["ementa"], f"Expected font color ementa, got: {meta_font['ementa']}"
 
     links = extract_in_text_document_links("https://www.planalto.gov.br/ccivil_03/LEIS/2012/Lei/L12706.htm", sample_html)
     assert len(links) == 1
@@ -718,14 +888,15 @@ def run_sanity_checks() -> None:
 
 # --- CLI Entrypoint ---
 
-def main() -> None:
+def parse_args() -> argparse.Namespace:
+    """Parse and return command-line arguments."""
     parser = argparse.ArgumentParser(description="Planalto Legislation Scraper & Categorical Indexer")
     parser.add_argument("--category", type=str, default="all", choices=list(HUB_ENDPOINTS.keys()) + ["all"],
                         help="Specific category to scrape (default: all)")
     parser.add_argument("--output", type=str, default=str(DEFAULT_OUTPUT_DIR),
                         help=f"Destination directory (default: {DEFAULT_OUTPUT_DIR})")
-    parser.add_argument("--workers", type=int, default=10,
-                        help="Number of multithreading worker threads (default: 10)")
+    parser.add_argument("--workers", type=int, default=WORKERS,
+                        help=f"Number of multithreading worker threads (default: {WORKERS})")
     parser.add_argument("--limit", type=int, default=None,
                         help="Limit number of documents to download (for testing/spikes)")
     parser.add_argument("--max-depth", type=int, default=3,
@@ -739,11 +910,15 @@ def main() -> None:
     parser.add_argument("--sync", action="store_true",
                         help="Force synchronous single-threaded mode")
     parser.add_argument("--reindex", action="store_true",
-                        help="Re-scan and index all locally downloaded files in docs/ without downloading")
+                        help="Explicitly re-scan and index all locally downloaded files in docs/corpus without scraping")
     parser.add_argument("--check-only", action="store_true",
                         help="Run sanity asserts and crawl discovery without downloading files")
 
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
 
     # Step 1: Run inline validation asserts
     run_sanity_checks()
@@ -758,7 +933,7 @@ def main() -> None:
         scan_text_links=not args.no_scan_text_links,
     )
 
-    # Step 2: Handle re-index mode
+    # Step 2: Explicit Re-index Mode (Only when explicitly passed)
     if args.reindex:
         scraper.reindex_existing_files()
         return
@@ -772,19 +947,38 @@ def main() -> None:
     # Step 4: Discover all law documents from index pages
     law_urls = scraper.crawl_index_pages(seeds, max_depth=args.max_depth)
 
+    # Step 5: Filter out documents already indexed locally
+    already_indexed_urls = set(scraper.processed_records.keys())
+    # Also include filenames mapped to URLs
+    already_indexed_files = {r.get("file_path", "") for r in scraper.processed_records.values()}
+    
+    unindexed_urls = set()
+    for u in law_urls:
+        cat = classify_document(u)
+        fname = create_safe_filename(u)
+        rel_f = f"{cat}/{fname}"
+        if u not in already_indexed_urls and rel_f not in already_indexed_files:
+            unindexed_urls.add(u)
+
+    print(f"[*] Crawl Filter: {len(law_urls)} total discovered vs {len(already_indexed_urls)} already in index. {len(unindexed_urls)} new documents to scrape.")
+
     if args.check_only:
-        print(f"[*] Check-only mode: Discovered {len(law_urls)} candidate documents. Skipping download.")
+        print(f"[*] Check-only mode: Discovered {len(law_urls)} documents ({len(unindexed_urls)} pending download). Skipping download.")
         return
 
-    # Step 5: Download documents with multithreading, in-text link extraction & indexing
-    results = scraper.download_and_index_corpus(law_urls, limit=args.limit)
+    # Step 6: Download only missing documents with multithreading, in-text link extraction & indexing
+    if unindexed_urls:
+        results = scraper.download_and_index_corpus(unindexed_urls, limit=args.limit)
+    else:
+        print("[✓] All discovered documents are already downloaded and indexed locally!")
+        results = list(scraper.processed_records.values())
 
-    # Step 6: Summary Output
+    # Step 7: Summary Output
     print("\n" + "=" * 65)
     print(f" PLANALTO LEGISLATION SCRAPER & INDEXER SUMMARY")
     print("=" * 65)
     print(f"Destination:     {output_path.resolve()}")
-    print(f"Total Indexed:   {len(results)} documents")
+    print(f"Total Indexed:   {len(scraper.processed_records)} documents")
     print(f"Index CSV:       {scraper.index_csv_file.resolve()}")
     print(f"Index JSON:      {scraper.index_json_file.resolve()}")
     print(f"Workers:         {1 if args.sync else args.workers} ({'Sync' if args.sync else 'Multithreaded'})")
