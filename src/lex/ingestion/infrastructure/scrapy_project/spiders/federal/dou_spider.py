@@ -74,6 +74,13 @@ SECTION_POSITIONS_MAP: dict[str, int] = {
     "do3": 3,
 }
 
+SECTION_DISPLAY_NAMES: dict[str, str] = {
+    "extra": "Extra",
+    "secao_1": "Seção 1",
+    "secao_2": "Seção 2",
+    "secao_3": "Seção 3",
+}
+
 SCRIPT_PARAMS_PATTERN: re.Pattern[str] = re.compile(
     r'<script\b[^>]*\bid=["\']params["\'][^>]*>(.*?)</script>', re.DOTALL
 )
@@ -156,11 +163,11 @@ class FederalDouSpider(BaseGazetteSpider):
         is_extra: bool = meta.get("is_extra", False)
         position: int = meta.get("position", 0)
 
-        # Handle 502/404 indicating no official gazette edition published on this date
+        # Silently skip 502/404 indicating no edition published (weekend/holiday)
         if response.status in (502, 404):
-            self.logger.info(
+            self.logger.debug(
                 f"[SKIP] Sem publicação do DOU ({section_name}) em {target_date.isoformat()} "
-                f"(status {response.status} - fim de semana/feriado)."
+                f"(status {response.status})."
             )
             return
 
@@ -170,9 +177,8 @@ class FederalDouSpider(BaseGazetteSpider):
         # Extract embedded JSON data in <script id="params" type="application/json">
         script_match = SCRIPT_PARAMS_PATTERN.search(response.text)
         if not script_match:
-            self.logger.info(
-                f"[SKIP] Sem publicação do DOU ({section_name}) em {target_date.isoformat()} "
-                "(sem dados de edição)."
+            self.logger.debug(
+                f"[SKIP] Sem dados para DOU ({section_name}) em {target_date.isoformat()}."
             )
             return
 
@@ -186,7 +192,7 @@ class FederalDouSpider(BaseGazetteSpider):
 
         articles = params_data.get("jsonArray", [])
         if not articles:
-            self.logger.info(
+            self.logger.debug(
                 f"[SKIP] Zero artigos para DOU ({section_name}) em {target_date.isoformat()}."
             )
             return
@@ -228,6 +234,8 @@ class FederalDouSpider(BaseGazetteSpider):
 
         # 2. Concurrently fetch and stream each discrete act payload with real-time tqdm progress
         sem = asyncio.Semaphore(DEFAULT_CONCURRENT_SEMAPHORE)
+        sec_label = SECTION_DISPLAY_NAMES.get(section_name, section_name)
+        progress_desc = f"DOU {self.territory_code} {target_date.strftime('%d/%m/%Y')} {sec_label}"
 
         async with httpx.AsyncClient(
             headers=DEFAULT_BROWSER_HEADERS,
@@ -239,7 +247,7 @@ class FederalDouSpider(BaseGazetteSpider):
         ) as client:
             with tqdm(
                 total=total_acts,
-                desc=f"DOU {section_name}",
+                desc=progress_desc,
                 unit="ato",
                 dynamic_ncols=True,
                 position=position,
