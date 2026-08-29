@@ -66,6 +66,9 @@ class DecorrelatedJitterRetryMiddleware:
         self, request: Request, response: Response, spider: Any = None
     ) -> Response | Request:
         """Evaluate response status and retry with decorrelated jitter if matching error code."""
+        # If request explicitly handles this status code (e.g. 502/404 on index checks), pass through
+        if response.status in request.meta.get("handle_httpstatus_list", ()):
+            return response
         if response.status in self.retry_http_codes:
             return self._retry(request, f"HTTP status {response.status}") or response
         return response

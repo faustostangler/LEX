@@ -2,19 +2,22 @@
 """Export database tables from PostgreSQL to CSV files.
 
 Supports exporting all public tables by default, or a specific table if parameterized.
-Escapes embedded newlines (\\n) by default so each database record occupies exactly
-one physical line in the CSV, enabling seamless import into Google Sheets / Excel.
+Escapes embedded newlines (\\n) and strictly caps cell lengths at 45,000 characters
+AFTER escaping to guarantee 100% compatibility with Google Sheets' 50,000 char per cell limit.
 
 Usage:
-    # Export all tables to CSV in playground/ directory (default)
+    # Export all tables to CSV in playground/ directory (default Google Sheets safe)
     python playground/export_table_to_csv.py
 
     # Export a specific table
     python playground/export_table_to_csv.py --table normative_acts
     python playground/export_table_to_csv.py --table gazette_editions --output playground/editions.csv
 
-    # Filter specific table by date/limit
-    python playground/export_table_to_csv.py --table normative_acts --date 2024-01-15 --limit 500
+    # Omit heavy raw_content column for ultra-light metadata spreadsheet
+    python playground/export_table_to_csv.py --table normative_acts --exclude-raw
+
+    # Export with custom cell length or unlimited
+    python playground/export_table_to_csv.py --max-cell-chars 0  # Unlimited (not Google Sheets safe)
 """
 
 import argparse
@@ -28,6 +31,7 @@ from sqlalchemy import create_engine, inspect, text
 from lex.shared_kernel.config import LexSettings
 
 DEFAULT_OUTPUT_DIR = Path("playground")
+DEFAULT_MAX_CELL_CHARS = 45000  # Google Sheets hard cap is 50,000 chars per cell
 
 
 def get_available_tables(engine) -> list[str]:
@@ -45,13 +49,22 @@ def export_single_table(
     target_date: str | None = None,
     limit: int | None = None,
     escape_newlines: bool = True,
-) -> int:
-    """Export a single table's rows to a CSV file."""
+    max_cell_chars: int = DEFAULT_MAX_CELL_CHARS,
+    exclude_columns: set[str] | None = None,
+) -> tuple[int, int]:
+    """Export a single table's rows to a CSV file.
+
+    Returns:
+        (total_rows_exported, total_truncated_cells)
+    """
     output_file.parent.mkdir(parents=True, exist_ok=True)
+    exclude_columns = exclude_columns or set()
 
     inspector = inspect(engine)
     columns_info = inspector.get_columns(table_name, schema="public")
-    column_names = [col["name"] for col in columns_info]
+    column_names = [
+        col["name"] for col in columns_info if col["name"] not in exclude_columns
+    ]
 
     where_clauses = []
     params: dict[str, object] = {}
@@ -65,7 +78,7 @@ def export_single_table(
 
     query = text(
         f"""
-        SELECT *
+        SELECT {', '.join(column_names)}
         FROM {table_name}
         {where_sql}
         {limit_sql}
@@ -73,6 +86,8 @@ def export_single_table(
     )
 
     count = 0
+    truncated_count = 0
+
     with engine.connect() as conn:
         result = conn.execution_options(stream_results=True).execute(
             query, params
@@ -99,19 +114,33 @@ def export_single_table(
                             .replace("\r", "\\n")
                             .replace("\n", "\\n")
                         )
+
+                    # Strictly enforce maximum cell characters AFTER all string transformations
+                    if (
+                        isinstance(val, str)
+                        and max_cell_chars > 0
+                        and len(val) > max_cell_chars
+                    ):
+                        original_len = len(val)
+                        suffix = (
+                            f" ...[TRUNCATED: TOTAL {original_len:,} CHARS]"
+                        )
+                        val = val[: max_cell_chars - len(suffix)] + suffix
+                        truncated_count += 1
+
                     formatted_values.append(val)
 
                 writer.writerow(formatted_values)
                 count += 1
 
-    return count
+    return count, truncated_count
 
 
 def main() -> None:
     settings = LexSettings()
 
     parser = argparse.ArgumentParser(
-        description="Export PostgreSQL tables to CSV."
+        description="Export PostgreSQL tables to CSV (Google Sheets & Excel compatible)."
     )
     parser.add_argument(
         "--table",
@@ -140,6 +169,18 @@ def main() -> None:
         type=int,
         default=None,
         help="Limit number of rows exported per table",
+    )
+    parser.add_argument(
+        "--max-cell-chars",
+        type=int,
+        default=DEFAULT_MAX_CELL_CHARS,
+        help="Maximum characters per cell (default: 45,000 for Google Sheets compatibility; 0 for unlimited)",
+    )
+    parser.add_argument(
+        "--exclude-raw",
+        action="store_true",
+        default=False,
+        help="Exclude raw_content text column to generate an ultra-light metadata CSV",
     )
     parser.add_argument(
         "--no-escape-newlines",
@@ -182,7 +223,9 @@ def main() -> None:
         f"[*] Starting CSV export for {len(tables_to_export)} table(s) from PostgreSQL..."
     )
     total_all_rows = 0
+    total_all_truncated = 0
     escape_newlines = not args.no_escape_newlines
+    exclude_cols = {"raw_content"} if args.exclude_raw else set()
 
     for tbl in tables_to_export:
         if len(tables_to_export) == 1 and args.output and args.output.suffix == ".csv":
@@ -190,19 +233,30 @@ def main() -> None:
         else:
             out_file = target_dir / f"{tbl}.csv"
 
-        rows = export_single_table(
+        rows, truncated = export_single_table(
             engine=engine,
             table_name=tbl,
             output_file=out_file,
             target_date=args.date,
             limit=args.limit,
             escape_newlines=escape_newlines,
+            max_cell_chars=args.max_cell_chars,
+            exclude_columns=exclude_cols,
         )
         total_all_rows += rows
+        total_all_truncated += truncated
         size_mb = out_file.stat().st_size / (1024 * 1024)
-        print(f"  ✓ {tbl:<20} → {rows:>6,} rows | {size_mb:>6.2f} MB | {out_file}")
+        trunc_info = f" ({truncated} cells safely capped < 45k chars)" if truncated else ""
+        print(f"  ✓ {tbl:<20} → {rows:>6,} rows | {size_mb:>6.2f} MB | {out_file}{trunc_info}")
 
-    print(f"\n[✓] Export complete: {total_all_rows:,} total rows across {len(tables_to_export)} table(s).")
+    print(
+        f"\n[✓] Export complete: {total_all_rows:,} total rows across {len(tables_to_export)} table(s)."
+    )
+    if total_all_truncated:
+        print(
+            f"    ℹ {total_all_truncated} large cells were truncated to {args.max_cell_chars:,} chars "
+            "for 100% Google Sheets compatibility."
+        )
 
 
 if __name__ == "__main__":

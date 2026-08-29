@@ -1,7 +1,7 @@
 """Command Line Interface (CLI) for LEX Ingestion Engine.
 
-Provides administrative database initialization, schema migration, and crawler orchestration.
-Defaults to 'crawl federal_dou' when executed without explicit sub-commands.
+Provides database initialization, schema migration, and crawler orchestration.
+Defaults to crawling in reverse chronological order (from today back to 2002-01-02).
 """
 
 import argparse
@@ -19,16 +19,9 @@ from lex.shared_kernel.config import LexSettings
 # -----------------------------------------------------------------------------
 # Module Constants (ADR-003)
 # -----------------------------------------------------------------------------
-DEFAULT_FALLBACK_CRAWL_DATE: str = "2024-01-15"
+# Earliest publication available in the modern digital DOU portal (in.gov.br)
+EARLIEST_MODERN_DOU_DATE: str = "2002-01-02"
 DEFAULT_SPIDER_NAME: str = "federal_dou"
-
-
-def get_default_crawl_date() -> str:
-    """Return default target date for crawling (guaranteeing valid gazettes)."""
-    today = date.today()
-    if today.year > 2024:
-        return DEFAULT_FALLBACK_CRAWL_DATE
-    return today.isoformat()
 
 
 def init_db() -> None:
@@ -58,23 +51,36 @@ def init_db() -> None:
 
 def run_crawler(
     spider_name: str,
-    start_date: str | None,
-    end_date: str | None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    single_date: str | None = None,
     force: bool = False,
+    reverse: bool = True,
 ) -> None:
-    """Execute Scrapy crawler process for target spider and date interval."""
+    """Execute Scrapy crawler process for target spider and date interval in descending order."""
     settings = get_project_settings()
     process = CrawlerProcess(settings)
 
-    default_date = get_default_crawl_date()
-    spider_args: dict[str, Any] = {}
-    spider_args["start_date"] = start_date or default_date
-    spider_args["end_date"] = end_date or start_date or default_date
-    spider_args["force"] = force
+    today_str = date.today().isoformat()
 
-    interval_msg = f"{spider_args['start_date']} -> {spider_args['end_date']}"
+    if single_date:
+        effective_start = single_date
+        effective_end = single_date
+    else:
+        effective_start = start_date or EARLIEST_MODERN_DOU_DATE
+        effective_end = end_date or today_str
+
+    spider_args: dict[str, Any] = {
+        "start_date": effective_start,
+        "end_date": effective_end,
+        "force": force,
+        "reverse": reverse,
+    }
+
+    order_desc = "newest → oldest" if reverse else "oldest → newest"
     force_msg = " [FORCE OVERRIDE]" if force else ""
-    print(f"Starting spider '{spider_name}' (interval: {interval_msg}){force_msg}...")
+    interval_info = f"range: {effective_start} to {effective_end} | order: {order_desc}"
+    print(f"Starting spider '{spider_name}' ({interval_info}){force_msg}...")
     process.crawl(spider_name, **spider_args)
     process.start()
 
@@ -102,14 +108,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Spider name (default: federal_dou). Options: federal_dou, state_sp, etc.",
     )
     crawl_parser.add_argument(
+        "--date",
+        "-d",
+        help="Single target date (YYYY-MM-DD)",
+        default=None,
+    )
+    crawl_parser.add_argument(
         "--start-date",
-        help="Start date (YYYY-MM-DD)",
+        help=f"Start date (YYYY-MM-DD, default: {EARLIEST_MODERN_DOU_DATE})",
         default=None,
     )
     crawl_parser.add_argument(
         "--end-date",
-        help="End date (YYYY-MM-DD)",
+        help="End date (YYYY-MM-DD, default: today)",
         default=None,
+    )
+    crawl_parser.add_argument(
+        "--ascending",
+        action="store_true",
+        default=False,
+        help="Crawl in ascending chronological order (oldest to newest).",
     )
     crawl_parser.add_argument(
         "--force",
@@ -133,7 +151,7 @@ def parse_cli_args(args: list[str] | None = None) -> argparse.Namespace:
             # First argument is spider name (e.g. `lex state_sp`)
             raw_args = ["crawl"] + raw_args
         else:
-            # First argument is a flag (e.g. `lex --start-date 2024-01-02`)
+            # First argument is a flag (e.g. `lex --date 2024-01-15`)
             raw_args = ["crawl", DEFAULT_SPIDER_NAME] + raw_args
 
     parser = build_parser()
@@ -148,10 +166,12 @@ def main(args: list[str] | None = None) -> None:
         init_db()
     elif parsed_args.command == "crawl":
         run_crawler(
-            parsed_args.spider,
-            parsed_args.start_date,
-            parsed_args.end_date,
+            spider_name=parsed_args.spider,
+            start_date=parsed_args.start_date,
+            end_date=parsed_args.end_date,
+            single_date=parsed_args.date,
             force=parsed_args.force,
+            reverse=not parsed_args.ascending,
         )
     else:
         build_parser().print_help()

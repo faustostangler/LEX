@@ -141,6 +141,7 @@ class FederalDouSpider(BaseGazetteSpider):
                         "section_name": sec_name,
                         "position": SECTION_POSITIONS_MAP.get(sec_key, 0),
                         "is_extra": (sec_key == "doe"),
+                        "handle_httpstatus_list": [502, 404],
                     },
                     dont_filter=True,
                 )
@@ -149,27 +150,45 @@ class FederalDouSpider(BaseGazetteSpider):
         self, response: Response
     ) -> AsyncIterator[RawGazettePayload | RawNormativeActPayload]:
         """Parse modern in.gov.br leiturajornal page, yielding edition header and discrete acts."""
-        if not isinstance(response, HtmlResponse):
-            return
-
         meta = response.meta
         target_date: date = meta["gazette_date"]
         section_name: str = meta["section_name"]
         is_extra: bool = meta.get("is_extra", False)
         position: int = meta.get("position", 0)
 
+        # Handle 502/404 indicating no official gazette edition published on this date
+        if response.status in (502, 404):
+            self.logger.info(
+                f"[SKIP] Sem publicação do DOU ({section_name}) em {target_date.isoformat()} "
+                f"(status {response.status} - fim de semana/feriado)."
+            )
+            return
+
+        if not isinstance(response, HtmlResponse):
+            return
+
         # Extract embedded JSON data in <script id="params" type="application/json">
         script_match = SCRIPT_PARAMS_PATTERN.search(response.text)
         if not script_match:
+            self.logger.info(
+                f"[SKIP] Sem publicação do DOU ({section_name}) em {target_date.isoformat()} "
+                "(sem dados de edição)."
+            )
             return
 
         try:
             params_data = json.loads(script_match.group(1).strip())
         except (json.JSONDecodeError, ValueError):
+            self.logger.debug(
+                f"[SKIP] Script corrompido para DOU {section_name} em {target_date.isoformat()}."
+            )
             return
 
         articles = params_data.get("jsonArray", [])
         if not articles:
+            self.logger.info(
+                f"[SKIP] Zero artigos para DOU ({section_name}) em {target_date.isoformat()}."
+            )
             return
 
         edition_number = str(articles[0].get("editionNumber", "1")) if articles else "1"
