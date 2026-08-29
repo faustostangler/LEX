@@ -89,8 +89,6 @@ module = [
     "scrapy.*",
     "pypdf.*",
     "twisted.*",
-    "polyfactory.*",
-    "prometheus_client.*",
 ]
 ignore_missing_imports = true
 
