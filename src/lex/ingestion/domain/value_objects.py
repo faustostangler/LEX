@@ -1,8 +1,8 @@
-"""Value Objects for the Ingestion Bounded Context.
+"""Value Objects for the Ingestion and Digestion Bounded Contexts.
 
 Enforces strict domain invariants at construction time for all legislative metadata
-concepts (TerritoryId, GazetteDate, DocumentHash, FederativeTier) to eradicate
-Primitive Obsession across the modular monolith.
+concepts (TerritoryId, GazetteDate, DocumentHash, FederativeTier, ActType, ClassificationSource)
+to eradicate Primitive Obsession across the modular monolith.
 """
 
 import hashlib
@@ -26,6 +26,45 @@ class FederativeTier(StrEnum):
     FEDERAL = "federal"
     STATE = "state"
     MUNICIPAL = "municipal"
+
+
+class IngestionStatus(StrEnum):
+    """Lifecycle status of a gazette edition ingestion."""
+
+    PENDING = "pending"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class ClassificationSource(StrEnum):
+    """Origin of the normative act classification and boundary segmentation."""
+
+    PRE_SEGMENTED_SOURCE = "pre_segmented_source"
+    DETERMINISTIC_REGEX = "deterministic_regex"
+    LLM_FALLBACK = "llm_fallback"
+
+
+class ActType(StrEnum):
+    """Standardized legal typology for Brazilian normative acts."""
+
+    LEI = "LEI"
+    LEI_COMPLEMENTAR = "LEI COMPLEMENTAR"
+    DECRETO = "DECRETO"
+    DECRETO_LEI = "DECRETO-LEI"
+    PORTARIA = "PORTARIA"
+    RESOLUCAO = "RESOLUÇÃO"
+    INSTRUCAO_NORMATIVA = "INSTRUÇÃO NORMATIVA"
+    ALVARA = "ALVARÁ"
+    DECISAO = "DECISÃO"
+    DESPACHO = "DESPACHO"
+    EDITAL = "EDITAL"
+    ACORDAO = "ACÓRDÃO"
+    CONTRATO = "CONTRATO"
+    CONVENIO = "CONVÊNIO"
+    ATO_DECLARATORIO = "ATO DECLARATÓRIO"
+    RETIFICACAO = "RETIFICAÇÃO"
+    AVISO = "AVISO"
+    OUTROS = "OUTROS"
 
 
 # Set of 27 official Brazilian state codes (26 states + DF)

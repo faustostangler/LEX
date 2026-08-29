@@ -1,7 +1,7 @@
 """Precision Unit Tests for Ingestion Domain Entities.
 
 Verifies construction-time invariants and business constraints for GazetteEdition
-specified in SPEC-001 (Section 2.2 & 4).
+specified in ADR-002 and SPEC-001.
 """
 
 import uuid
@@ -15,6 +15,7 @@ from lex.ingestion.domain.value_objects import (
     DocumentHash,
     FederativeTier,
     GazetteDate,
+    IngestionStatus,
     TerritoryId,
 )
 
@@ -29,17 +30,13 @@ def make_valid_edition(
     section: str | None = "secao_1",
     is_extra_edition: bool = False,
     power: str = "executive",
-    source_url: str = (
-        "https://pesquisa.in.gov.br/imprensa/jsp/visualiza/index.jsp?data=02/01/2024&jornal=1"
-    ),
-    full_text: str = (
-        "DIÁRIO OFICIAL DA UNIÃO - SEÇÃO 1 - Publicado em 02/01/2024. Atos do Poder Executivo."
-    ),
-    char_count: int | None = None,
+    source_url: str = ("https://www.in.gov.br/leiturajornal?data=02-01-2024&secao=do1"),
+    summary_hash: DocumentHash | None = None,
+    total_acts: int = 25,
+    ingestion_status: IngestionStatus = IngestionStatus.COMPLETED,
     scraped_at: datetime | None = None,
 ) -> GazetteEdition:
     """Helper to instantiate a valid GazetteEdition with typed defaults."""
-    clean_text = full_text.strip()
     return GazetteEdition(
         id=id or uuid.uuid4(),
         territory_id=TerritoryId.from_code(territory_code),
@@ -50,9 +47,9 @@ def make_valid_edition(
         is_extra_edition=is_extra_edition,
         power=power,
         source_url=source_url,
-        file_hash=DocumentHash.from_text(full_text),
-        char_count=char_count if char_count is not None else len(clean_text),
-        full_text=full_text,
+        summary_hash=summary_hash or DocumentHash.from_text("edition-summary-mock"),
+        total_acts=total_acts,
+        ingestion_status=ingestion_status,
         scraped_at=scraped_at or datetime.now(UTC),
     )
 
@@ -65,24 +62,8 @@ class TestGazetteEdition:
         edition = make_valid_edition()
         assert edition.territory_id.code == "BR"
         assert edition.tier == FederativeTier.FEDERAL
-        assert edition.char_count == len(edition.full_text.strip())
-
-    def test_empty_text_raises_invariant(self) -> None:
-        """Boundary condition: Empty or whitespace-only full_text is rejected."""
-        match_err = "full_text must contain non-whitespace content"
-        with pytest.raises(DomainInvariantViolationError, match=match_err):
-            make_valid_edition(full_text="   ", char_count=0)
-
-    def test_zero_or_negative_char_count_raises_invariant(self) -> None:
-        """Boundary condition: char_count <= 0 is rejected."""
-        match_err = "char_count must be strictly greater than zero"
-        with pytest.raises(DomainInvariantViolationError, match=match_err):
-            make_valid_edition(full_text="valid text", char_count=-5)
-
-    def test_char_count_mismatch_raises_invariant(self) -> None:
-        """Boundary condition: char_count must strictly equal len(full_text.strip())."""
-        with pytest.raises(DomainInvariantViolationError, match="char_count mismatch"):
-            make_valid_edition(char_count=999999)
+        assert edition.total_acts == 25
+        assert edition.ingestion_status == IngestionStatus.COMPLETED
 
     def test_invalid_source_url_raises_invariant(self) -> None:
         """Boundary condition: source_url must be an HTTP/HTTPS URL."""

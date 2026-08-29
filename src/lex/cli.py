@@ -25,21 +25,21 @@ def get_default_crawl_date() -> str:
 
 
 def init_db() -> None:
-    """Initialize PostgreSQL relational schema and configure LZ4 TOAST compression."""
+    """Initialize PostgreSQL schema and configure LZ4 TOAST compression on normative_acts."""
     settings = LexSettings()
     print(f"Connecting to database: {settings.database_url}...")
     engine = create_engine(str(settings.database_url), echo=False)
 
-    print("Creating tables (gazette_editions)...")
+    print("Creating tables (gazette_editions, normative_acts)...")
     Base.metadata.create_all(engine)
 
-    # Configure PostgreSQL LZ4 TOAST compression if running on PostgreSQL 14+
+    # Configure PostgreSQL LZ4 TOAST compression on normative_acts.raw_content
     if engine.dialect.name == "postgresql":
-        print("Configuring PostgreSQL 16 LZ4 TOAST compression on full_text column...")
+        print("Configuring PostgreSQL 16 LZ4 TOAST compression on normative_acts.raw_content...")
         with engine.connect() as conn:
             try:
                 conn.execute(
-                    text("ALTER TABLE gazette_editions ALTER COLUMN full_text SET COMPRESSION lz4;")
+                    text("ALTER TABLE normative_acts ALTER COLUMN raw_content SET COMPRESSION lz4;")
                 )
                 conn.commit()
                 print("LZ4 TOAST compression successfully activated.")
@@ -65,21 +65,8 @@ def run_crawler(spider_name: str, start_date: str | None, end_date: str | None) 
     process.start()
 
 
-def main(args: list[str] | None = None) -> None:
-    """CLI routing entrypoint with 'crawl' as default action."""
-    raw_args = list(sys.argv[1:]) if args is None else list(args)
-
-    # Pre-process arguments to allow 'crawl' as default command
-    if not raw_args:
-        raw_args = ["crawl", "federal_dou"]
-    elif raw_args[0] not in ("init-db", "crawl", "-h", "--help"):
-        if not raw_args[0].startswith("-"):
-            # First argument is spider name (e.g. `lex state_sp`)
-            raw_args = ["crawl"] + raw_args
-        else:
-            # First argument is a flag (e.g. `lex --start-date 2024-01-02`)
-            raw_args = ["crawl", "federal_dou"] + raw_args
-
+def build_parser() -> argparse.ArgumentParser:
+    """Construct and configure CLI argument parser with subparsers."""
     parser = argparse.ArgumentParser(
         prog="lex",
         description="LEX Brazilian Legislation Ingestion & Digestion Engine CLI",
@@ -87,7 +74,10 @@ def main(args: list[str] | None = None) -> None:
     subparsers = parser.add_subparsers(dest="command", help="Available sub-commands")
 
     # init-db sub-command
-    subparsers.add_parser("init-db", help="Initialize database schema and LZ4 TOAST compression")
+    subparsers.add_parser(
+        "init-db",
+        help="Initialize database schema and LZ4 TOAST compression",
+    )
 
     # crawl sub-command
     crawl_parser = subparsers.add_parser("crawl", help="Run a gazette spider (Default)")
@@ -108,14 +98,38 @@ def main(args: list[str] | None = None) -> None:
         default=None,
     )
 
-    parsed_args = parser.parse_args(raw_args)
+    return parser
+
+
+def parse_cli_args(args: list[str] | None = None) -> argparse.Namespace:
+    """Pre-process CLI arguments and parse via ArgumentParser."""
+    raw_args = list(sys.argv[1:]) if args is None else list(args)
+
+    # Pre-process arguments to allow 'crawl' as default command
+    if not raw_args:
+        raw_args = ["crawl", "federal_dou"]
+    elif raw_args[0] not in ("init-db", "crawl", "-h", "--help"):
+        if not raw_args[0].startswith("-"):
+            # First argument is spider name (e.g. `lex state_sp`)
+            raw_args = ["crawl"] + raw_args
+        else:
+            # First argument is a flag (e.g. `lex --start-date 2024-01-02`)
+            raw_args = ["crawl", "federal_dou"] + raw_args
+
+    parser = build_parser()
+    return parser.parse_args(raw_args)
+
+
+def main(args: list[str] | None = None) -> None:
+    """CLI routing entrypoint with 'crawl' as default action."""
+    parsed_args = parse_cli_args(args)
 
     if parsed_args.command == "init-db":
         init_db()
     elif parsed_args.command == "crawl":
         run_crawler(parsed_args.spider, parsed_args.start_date, parsed_args.end_date)
     else:
-        parser.print_help()
+        build_parser().print_help()
 
 
 if __name__ == "__main__":

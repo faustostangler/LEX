@@ -1,14 +1,14 @@
 """Precision Unit Tests for GazetteMapper ACL.
 
-Verifies translation from RawGazettePayload DTO to GazetteEdition domain entity,
-string date parsing, and extractor integration specified in SPEC-001 (Section 4 Scenario 1).
+Verifies translation from RawGazettePayload and RawNormativeActPayload DTOs
+to GazetteEdition and NormativeAct domain entities.
 """
 
 from datetime import UTC, date, datetime
 
 import pytest
 
-from lex.ingestion.domain.entities import GazetteEdition
+from lex.ingestion.domain.entities import GazetteEdition, NormativeAct
 from lex.ingestion.domain.exceptions import (
     CorruptedGazettePayloadError,
     InvalidGazetteDateError,
@@ -16,7 +16,10 @@ from lex.ingestion.domain.exceptions import (
 )
 from lex.ingestion.domain.value_objects import FederativeTier
 from lex.ingestion.infrastructure.adapters.gazette_mapper import GazetteMapper
-from lex.ingestion.infrastructure.dto import RawGazettePayload
+from lex.ingestion.infrastructure.dto import (
+    RawGazettePayload,
+    RawNormativeActPayload,
+)
 
 
 class DummyExtractor:
@@ -44,13 +47,14 @@ class TestGazetteMapper:
         payload = RawGazettePayload(
             territory_code="BR",
             tier="federal",
-            source_url="https://pesquisa.in.gov.br/dou/2024-01-02",
-            raw_content="DIÁRIO OFICIAL DA UNIÃO - TEXTO COMPLETO",
+            source_url="https://www.in.gov.br/dou/2024-01-02",
+            raw_content="DOU secao_1 summary",
             raw_date_str="2024-01-02",
             edition_number="1",
             section="secao_1",
             is_extra_edition=False,
             power="executive",
+            total_acts=10,
             scraped_at=datetime(2024, 1, 2, 12, 0, 0, tzinfo=UTC),
         )
 
@@ -59,44 +63,34 @@ class TestGazetteMapper:
         assert edition.territory_id.code == "BR"
         assert edition.tier == FederativeTier.FEDERAL
         assert edition.date.value == date(2024, 1, 2)
-        assert edition.full_text == "DIÁRIO OFICIAL DA UNIÃO - TEXTO COMPLETO"
-        assert edition.char_count == len("DIÁRIO OFICIAL DA UNIÃO - TEXTO COMPLETO")
+        assert edition.total_acts == 10
 
-    def test_map_payload_with_pdf_bytes_delegates_to_extractor(self) -> None:
-        """Scenario: Byte stream is delegated to text extractor."""
-        extractor = DummyExtractor(return_text="PARSED FROM PDF BYTES")
-        mapper = GazetteMapper(text_extractor=extractor)
-
-        payload = RawGazettePayload(
-            territory_code="SP",
-            tier="state",
-            source_url="https://doe.sp.gov.br/2024-05-10",
-            raw_content=b"%PDF-1.4 dummy binary stream",
-            date_obj=date(2024, 5, 10),
-            section="executivo_1",
-        )
-
-        edition = mapper.to_domain(payload)
-        assert extractor.called_with == b"%PDF-1.4 dummy binary stream"
-        assert edition.full_text == "PARSED FROM PDF BYTES"
-        assert edition.territory_id.code == "SP"
-        assert edition.tier == FederativeTier.STATE
-
-    def test_map_payload_with_unsupported_raw_content_type_raises(self) -> None:
-        """Boundary condition: Invalid raw_content types raise CorruptedGazettePayloadError."""
+    def test_map_valid_normative_act_payload(self) -> None:
+        """Scenario: Map RawNormativeActPayload into a valid NormativeAct domain entity."""
         extractor = DummyExtractor()
         mapper = GazetteMapper(text_extractor=extractor)
 
-        payload = RawGazettePayload(
+        payload = RawNormativeActPayload(
             territory_code="BR",
-            tier="federal",
-            source_url="https://pesquisa.in.gov.br",
-            raw_content=12345,  # type: ignore[arg-type]
-            date_obj=date(2024, 1, 1),
+            source_url="https://www.in.gov.br/web/dou/-/portaria-1",
+            raw_content="Art. 1º Fica instituído o comitê.",
+            title="PORTARIA Nº 1, DE 15 DE JANEIRO DE 2024",
+            act_type="PORTARIA",
+            act_number="1",
+            act_year=2024,
+            date_obj=date(2024, 1, 15),
+            section="secao_1",
+            hierarchy=["Ministério da Fazenda", "Gabinete"],
         )
 
-        with pytest.raises(CorruptedGazettePayloadError, match="Unsupported raw_content type"):
-            mapper.to_domain(payload)
+        act = mapper.to_normative_act(payload)
+        assert isinstance(act, NormativeAct)
+        assert act.territory_id.code == "BR"
+        assert act.act_type == "PORTARIA"
+        assert act.act_number == "1"
+        assert act.act_year == 2024
+        assert act.hierarchy == ["Ministério da Fazenda", "Gabinete"]
+        assert act.char_count == len("Art. 1º Fica instituído o comitê.")
 
     @pytest.mark.parametrize(
         ("date_str", "expected_date"),
@@ -130,7 +124,7 @@ class TestGazetteMapper:
         payload = RawGazettePayload(
             territory_code="BR",
             tier="federal",
-            source_url="https://pesquisa.in.gov.br",
+            source_url="https://www.in.gov.br",
             raw_content="GAZETTE BODY",
             raw_date_str="2024-02-30",  # Feb 30 does not exist
         )
@@ -146,7 +140,7 @@ class TestGazetteMapper:
         payload = RawGazettePayload(
             territory_code="BR",
             tier="federal",
-            source_url="https://pesquisa.in.gov.br",
+            source_url="https://www.in.gov.br",
             raw_content="SOME CONTENT",
             raw_date_str=None,
             date_obj=None,
@@ -163,7 +157,7 @@ class TestGazetteMapper:
         payload = RawGazettePayload(
             territory_code="BR",
             tier="federal",
-            source_url="https://pesquisa.in.gov.br",
+            source_url="https://www.in.gov.br",
             raw_content="SOME CONTENT",
             raw_date_str="invalid-date-string",
         )

@@ -1,6 +1,7 @@
 """Precision Unit Tests for FederalDouSpider.
 
-Verifies date range generation and modern in.gov.br JSON article parsing.
+Verifies date range generation, modern in.gov.br JSON article parsing,
+and discrete RawNormativeActPayload streaming.
 """
 
 import json
@@ -9,7 +10,10 @@ from datetime import date
 import pytest
 from scrapy.http import HtmlResponse, Request
 
-from lex.ingestion.infrastructure.dto import RawGazettePayload
+from lex.ingestion.infrastructure.dto import (
+    RawGazettePayload,
+    RawNormativeActPayload,
+)
 from lex.ingestion.infrastructure.scrapy_project.spiders.federal.dou_spider import (
     FederalDouSpider,
 )
@@ -42,8 +46,10 @@ class TestFederalDouSpider:
         assert "section_name" in first_req.meta
 
     @pytest.mark.anyio
-    async def test_spider_parse_modern_section_yields_raw_gazette_payload(self) -> None:
-        """Scenario: parse_modern_section extracts JSON params and yields RawGazettePayload."""
+    async def test_spider_parse_modern_section_yields_edition_and_acts(
+        self,
+    ) -> None:
+        """Scenario: parse_modern_section yields RawGazettePayload followed by discrete acts."""
         spider = FederalDouSpider(start_date="2024-01-02", end_date="2024-01-02")
 
         mock_json = {
@@ -55,7 +61,7 @@ class TestFederalDouSpider:
                     "urlTitle": "portaria-n-1",
                     "title": "PORTARIA Nº 1, DE 2 DE JANEIRO DE 2024",
                     "editionNumber": "1",
-                    "hierarchyStr": "Ministério da Economia",
+                    "hierarchyStr": "Ministério da Fazenda",
                     "content": "Art. 1º Fica estabelecido...",
                 },
                 {
@@ -94,19 +100,32 @@ class TestFederalDouSpider:
             request=request,
         )
 
-        items: list[RawGazettePayload] = []
+        items: list[RawGazettePayload | RawNormativeActPayload] = []
         async for item in spider.parse_modern_section(response):
             items.append(item)
 
-        assert len(items) == 1
+        # Expect 1 edition header + 2 discrete acts = 3 items
+        assert len(items) == 3
 
-        payload = items[0]
-        assert isinstance(payload, RawGazettePayload)
-        assert payload.territory_code == "BR"
-        assert payload.tier == "federal"
-        assert payload.date_obj == date(2024, 1, 2)
-        assert payload.section == "secao_1"
-        assert payload.edition_number == "1"
-        assert payload.is_extra_edition is False
-        assert "PORTARIA Nº 1" in str(payload.raw_content)
-        assert "DECRETO Nº 2" in str(payload.raw_content)
+        edition_payload = items[0]
+        assert isinstance(edition_payload, RawGazettePayload)
+        assert edition_payload.territory_code == "BR"
+        assert edition_payload.tier == "federal"
+        assert edition_payload.date_obj == date(2024, 1, 2)
+        assert edition_payload.section == "secao_1"
+        assert edition_payload.edition_number == "1"
+        assert edition_payload.total_acts == 2
+
+        act_1 = items[1]
+        assert isinstance(act_1, RawNormativeActPayload)
+        assert act_1.territory_code == "BR"
+        assert act_1.act_type == "PORTARIA"
+        assert act_1.act_number == "1"
+        assert act_1.act_year == 2024
+        assert act_1.hierarchy == ["Ministério da Fazenda"]
+
+        act_2 = items[2]
+        assert isinstance(act_2, RawNormativeActPayload)
+        assert act_2.act_type == "DECRETO"
+        assert act_2.act_number == "2"
+        assert act_2.act_year == 2024

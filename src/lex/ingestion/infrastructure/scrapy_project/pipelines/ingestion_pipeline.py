@@ -1,9 +1,11 @@
-"""Scrapy Item Pipeline for Gazette Ingestion and Persistence.
+"""Scrapy Item Pipeline for Gazette and Normative Acts Ingestion and Persistence.
 
 Acts as the Hexagonal boundary integration between Scrapy crawler engines,
 the GazetteMapper Anti-Corruption Layer, and the GazetteRepositoryPort adapter.
 """
 
+import logging
+import uuid
 from typing import Any
 
 from scrapy.crawler import Crawler
@@ -11,19 +13,25 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from lex.ingestion.application.ports import GazetteRepositoryPort
+from lex.ingestion.domain.value_objects import GazetteDate, TerritoryId
 from lex.ingestion.infrastructure.adapters.gazette_mapper import GazetteMapper
 from lex.ingestion.infrastructure.adapters.stream_extractor import (
     PdfStreamTextExtractor,
 )
-from lex.ingestion.infrastructure.dto import RawGazettePayload
+from lex.ingestion.infrastructure.dto import (
+    RawGazettePayload,
+    RawNormativeActPayload,
+)
 from lex.ingestion.infrastructure.persistence.postgres_repository import (
     PostgresGazetteRepository,
 )
 from lex.shared_kernel.config import LexSettings
 
+logger = logging.getLogger(__name__)
+
 
 class GazetteIngestionPipeline:
-    """Scrapy pipeline that routes RawGazettePayload items to the domain repository."""
+    """Scrapy pipeline routing RawGazettePayload and RawNormativeActPayload items to DB."""
 
     def __init__(
         self,
@@ -34,6 +42,8 @@ class GazetteIngestionPipeline:
         self._repository = repository
         self._mapper = mapper
         self._session = session
+        # Cache mapped edition UUIDs: key -> edition_id
+        self._edition_id_cache: dict[tuple[str, str, str, str, bool], uuid.UUID] = {}
 
     @classmethod
     def from_crawler(cls, crawler: Crawler) -> "GazetteIngestionPipeline":
@@ -50,11 +60,58 @@ class GazetteIngestionPipeline:
         return cls(repository=repository, mapper=mapper, session=session)
 
     def process_item(self, item: Any, spider: Any = None) -> Any:
-        """Process yielded item through ACL mapper and domain repository."""
+        """Process yielded items through ACL mapper and domain repository."""
+        if self._mapper is None or self._repository is None:
+            return item
+
         if isinstance(item, RawGazettePayload):
-            if self._mapper is not None and self._repository is not None:
+            try:
                 edition = self._mapper.to_domain(item)
-                self._repository.save(edition)
+                edition_id = edition.id or uuid.uuid4()
+                edition_with_id = edition.model_copy(update={"id": edition_id})
+                self._repository.save(edition_with_id)
+
+                cache_key = (
+                    item.territory_code,
+                    str(edition.date.value),
+                    str(item.section or ""),
+                    str(item.edition_number or ""),
+                    item.is_extra_edition,
+                )
+                self._edition_id_cache[cache_key] = edition_id
+            except Exception as exc:
+                logger.error(f"Error persisting edition container {item.source_url}: {exc}")
+
+        elif isinstance(item, RawNormativeActPayload):
+            cache_key = (
+                item.territory_code,
+                str(item.date_obj),
+                str(item.section or ""),
+                str(item.edition_number or ""),
+                item.is_extra_edition,
+            )
+            cached_id = self._edition_id_cache.get(cache_key)
+            final_edition_id: uuid.UUID
+            if cached_id is not None:
+                final_edition_id = cached_id
+            else:
+                existing_edition = self._repository.get_by_territory_and_date(
+                    territory_id=TerritoryId.from_code(item.territory_code),
+                    date=GazetteDate.from_date(item.date_obj),
+                    section=item.section,
+                )
+                if existing_edition is not None and existing_edition.id is not None:
+                    final_edition_id = existing_edition.id
+                else:
+                    final_edition_id = uuid.uuid4()
+                self._edition_id_cache[cache_key] = final_edition_id
+
+            try:
+                act = self._mapper.to_normative_act(item, edition_id=final_edition_id)
+                self._repository.save_normative_act(act)
+            except Exception as exc:
+                logger.error(f"Error persisting normative act {item.source_url}: {exc}")
+
         return item
 
     def close_spider(self, spider: Any = None) -> None:

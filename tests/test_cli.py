@@ -5,7 +5,44 @@ Verifies default 'crawl' action, spider routing, and argument pre-processing.
 
 from unittest.mock import patch
 
-from lex.cli import main
+from lex.cli import build_parser, main, parse_cli_args
+
+
+def test_build_parser_structure() -> None:
+    """Scenario: build_parser defines expected sub-commands and default values."""
+    parser = build_parser()
+    assert parser.prog == "lex"
+
+    # Test crawl subcommand defaults
+    args = parser.parse_args(["crawl"])
+    assert args.command == "crawl"
+    assert args.spider == "federal_dou"
+    assert args.start_date is None
+    assert args.end_date is None
+
+    # Test init-db subcommand
+    args_db = parser.parse_args(["init-db"])
+    assert args_db.command == "init-db"
+
+
+def test_parse_cli_args_shorthand_routing() -> None:
+    """Scenario: parse_cli_args normalizes shorthand arguments."""
+    # Empty args -> crawl federal_dou
+    parsed_empty = parse_cli_args([])
+    assert parsed_empty.command == "crawl"
+    assert parsed_empty.spider == "federal_dou"
+
+    # Spider shorthand -> crawl state_sp
+    parsed_spider = parse_cli_args(["state_sp", "--start-date", "2024-05-10"])
+    assert parsed_spider.command == "crawl"
+    assert parsed_spider.spider == "state_sp"
+    assert parsed_spider.start_date == "2024-05-10"
+
+    # Flag shorthand -> crawl federal_dou with flag
+    parsed_flag = parse_cli_args(["--start-date", "2024-01-02"])
+    assert parsed_flag.command == "crawl"
+    assert parsed_flag.spider == "federal_dou"
+    assert parsed_flag.start_date == "2024-01-02"
 
 
 def test_cli_no_args_defaults_to_crawl_federal_dou() -> None:
