@@ -47,6 +47,9 @@ DEFAULT_HTTP_TIMEOUT_SECONDS: float = 20.0
 DEFAULT_MAX_CONNECTIONS: int = 80
 DEFAULT_MAX_KEEPALIVE_CONNECTIONS: int = 50
 DEFAULT_TQDM_MIN_INTERVAL_SECONDS: float = 0.2
+DEFAULT_TQDM_BAR_FORMAT: str = (
+    "{desc}: {percentage:3.0f}%|{bar}| {n:4d}/{total:4d} [{elapsed}<{remaining}, {rate_fmt}]"
+)
 
 LEITURA_JORNAL_BASE_URL: str = "https://www.in.gov.br/leiturajornal"
 ARTICLE_READ_BASE_URL: str = "https://www.in.gov.br/web/dou/-/"
@@ -67,18 +70,11 @@ MODERN_SECTIONS_MAP: dict[str, str] = {
     "do3": "secao_3",
 }
 
-SECTION_POSITIONS_MAP: dict[str, int] = {
-    "doe": 0,
-    "do1": 1,
-    "do2": 2,
-    "do3": 3,
-}
-
-SECTION_DISPLAY_NAMES: dict[str, str] = {
-    "extra": "Extra",
-    "secao_1": "Seção 1",
-    "secao_2": "Seção 2",
-    "secao_3": "Seção 3",
+SECTION_CODE_MAP: dict[str, str] = {
+    "extra": "E",
+    "secao_1": "1",
+    "secao_2": "2",
+    "secao_3": "3",
 }
 
 SCRIPT_PARAMS_PATTERN: re.Pattern[str] = re.compile(
@@ -107,9 +103,7 @@ class FederalDouSpider(BaseGazetteSpider):
     ) -> None:
         super().__init__(*args, **kwargs)
         self.repository = repository
-        self.force = (
-            (str(force).lower() in ("true", "1", "yes")) if isinstance(force, str) else bool(force)
-        )
+        self.force = force.lower() in ("true", "1", "yes") if isinstance(force, str) else force
         self._session: Session | None = None
 
     @classmethod
@@ -146,7 +140,6 @@ class FederalDouSpider(BaseGazetteSpider):
                         "gazette_date": target_date,
                         "section_key": sec_key,
                         "section_name": sec_name,
-                        "position": SECTION_POSITIONS_MAP.get(sec_key, 0),
                         "is_extra": (sec_key == "doe"),
                         "handle_httpstatus_list": [502, 404],
                     },
@@ -161,7 +154,6 @@ class FederalDouSpider(BaseGazetteSpider):
         target_date: date = meta["gazette_date"]
         section_name: str = meta["section_name"]
         is_extra: bool = meta.get("is_extra", False)
-        position: int = meta.get("position", 0)
 
         # Silently skip 502/404 indicating no edition published (weekend/holiday)
         if response.status in (502, 404):
@@ -212,9 +204,9 @@ class FederalDouSpider(BaseGazetteSpider):
                 and existing_edition.ingestion_status == IngestionStatus.COMPLETED
                 and existing_edition.total_acts == total_acts
             ):
-                self.logger.info(
+                self.logger.debug(
                     f"[SKIP] DOU {section_name} ({target_date.isoformat()}) already fully "
-                    f"ingested ({total_acts} acts). Skipping download (pass --force to re-crawl)."
+                    f"ingested ({total_acts} acts). Skipping download."
                 )
                 return
 
@@ -234,8 +226,8 @@ class FederalDouSpider(BaseGazetteSpider):
 
         # 2. Concurrently fetch and stream each discrete act payload with real-time tqdm progress
         sem = asyncio.Semaphore(DEFAULT_CONCURRENT_SEMAPHORE)
-        sec_label = SECTION_DISPLAY_NAMES.get(section_name, section_name)
-        progress_desc = f"DOU {self.territory_code} {target_date.strftime('%d/%m/%Y')} {sec_label}"
+        sec_code = SECTION_CODE_MAP.get(section_name, section_name)
+        progress_desc = f"DOU {self.territory_code} {target_date.strftime('%d/%m/%Y')} {sec_code}"
 
         async with httpx.AsyncClient(
             headers=DEFAULT_BROWSER_HEADERS,
@@ -249,8 +241,8 @@ class FederalDouSpider(BaseGazetteSpider):
                 total=total_acts,
                 desc=progress_desc,
                 unit="ato",
+                bar_format=DEFAULT_TQDM_BAR_FORMAT,
                 dynamic_ncols=True,
-                position=position,
                 leave=True,
                 mininterval=DEFAULT_TQDM_MIN_INTERVAL_SECONDS,
             ) as pbar:

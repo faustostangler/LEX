@@ -32,7 +32,7 @@ ROBOTSTXT_OBEY = False
 
 # Default Concurrency & Latency Controls
 CONCURRENT_REQUESTS = 32
-CONCURRENT_REQUESTS_PER_DOMAIN = 8
+CONCURRENT_REQUESTS_PER_DOMAIN = 32  # 8
 DOWNLOAD_DELAY = 0.25
 
 # AutoThrottle Downloader Middleware
