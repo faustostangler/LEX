@@ -3,6 +3,7 @@
 Scrapes Section 1 (DO1), Section 2 (DO2), Section 3 (DO3), and Extra (DOE) editions directly
 from the modern Imprensa Nacional portal (www.in.gov.br/leiturajornal).
 Yields discrete RawNormativeActPayload items for every published normative act without string joins.
+Supports Zero-Scrape Idempotent Early-Exit (ADR-004) to avoid re-scraping completed editions.
 """
 
 import asyncio
@@ -10,18 +11,75 @@ import json
 import re
 from collections.abc import AsyncIterator, Generator
 from datetime import date
+from typing import Any, Self
 
 import httpx
 from bs4 import BeautifulSoup
+from scrapy.crawler import Crawler
 from scrapy.http import HtmlResponse, Request, Response
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
 from tqdm import tqdm
 
+from lex.ingestion.application.ports import GazetteRepositoryPort
+from lex.ingestion.domain.value_objects import (
+    GazetteDate,
+    IngestionStatus,
+    TerritoryId,
+)
 from lex.ingestion.infrastructure.dto import (
     RawGazettePayload,
     RawNormativeActPayload,
 )
+from lex.ingestion.infrastructure.persistence.postgres_repository import (
+    PostgresGazetteRepository,
+)
 from lex.ingestion.infrastructure.scrapy_project.spiders.base import (
     BaseGazetteSpider,
+)
+from lex.shared_kernel.config import LexSettings
+
+# -----------------------------------------------------------------------------
+# Module Constants & Operational Defaults (ADR-003)
+# -----------------------------------------------------------------------------
+DEFAULT_CONCURRENT_SEMAPHORE: int = 25
+DEFAULT_HTTP_TIMEOUT_SECONDS: float = 20.0
+DEFAULT_MAX_CONNECTIONS: int = 50
+DEFAULT_MAX_KEEPALIVE_CONNECTIONS: int = 30
+DEFAULT_TQDM_MIN_INTERVAL_SECONDS: float = 0.2
+
+LEITURA_JORNAL_BASE_URL: str = "https://www.in.gov.br/leiturajornal"
+ARTICLE_READ_BASE_URL: str = "https://www.in.gov.br/web/dou/-/"
+
+DEFAULT_BROWSER_HEADERS: dict[str, str] = {
+    "User-Agent": (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+}
+
+MODERN_SECTIONS_MAP: dict[str, str] = {
+    "doe": "extra",
+    "do1": "secao_1",
+    "do2": "secao_2",
+    "do3": "secao_3",
+}
+
+SECTION_POSITIONS_MAP: dict[str, int] = {
+    "doe": 0,
+    "do1": 1,
+    "do2": 2,
+    "do3": 3,
+}
+
+SCRIPT_PARAMS_PATTERN: re.Pattern[str] = re.compile(
+    r'<script\b[^>]*\bid=["\']params["\'][^>]*>(.*?)</script>', re.DOTALL
+)
+ACT_TYPOLOGY_PATTERN: re.Pattern[str] = re.compile(
+    r"^([A-ZÁÉÍÓÚÂÊÔÃÕÇ\s\/\-]+?)(?:\s+(?:[Nn][º°o\.]\s*))([0-9\.\-\/]+)?(?:.*?(?:DE\s+\d+\s+DE\s+[A-Za-zçãéíóúáâêô]+\s+DE\s+(\d{4})))?",
+    re.IGNORECASE,
 )
 
 
@@ -33,23 +91,46 @@ class FederalDouSpider(BaseGazetteSpider):
     tier = "federal"
     allowed_domains = ["www.in.gov.br", "in.gov.br", "pesquisa.in.gov.br"]
 
-    # Modern in.gov.br section identifiers
-    MODERN_SECTIONS: dict[str, str] = {
-        "do1": "secao_1",
-        "do2": "secao_2",
-        "do3": "secao_3",
-        "doe": "extra",
-    }
+    def __init__(
+        self,
+        *args: Any,
+        repository: GazetteRepositoryPort | None = None,
+        force: bool | str = False,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.repository = repository
+        self.force = (
+            (str(force).lower() in ("true", "1", "yes")) if isinstance(force, str) else bool(force)
+        )
+        self._session: Session | None = None
 
-    LEITURA_JORNAL_URL = "https://www.in.gov.br/leiturajornal"
-    ARTICLE_BASE_URL = "https://www.in.gov.br/web/dou/-/"
+    @classmethod
+    def from_crawler(cls, crawler: Crawler, *args: Any, **kwargs: Any) -> Self:
+        spider = super().from_crawler(crawler, *args, **kwargs)
+        try:
+            settings = LexSettings()
+            if settings.database_url:
+                engine = create_engine(str(settings.database_url), pool_pre_ping=True)
+                session_factory = sessionmaker(bind=engine)
+                spider._session = session_factory()
+                spider.repository = PostgresGazetteRepository(session=spider._session)
+        except Exception:
+            spider.repository = None
+            spider._session = None
+        return spider
+
+    def closed(self, reason: str) -> None:
+        """Clean up repository database session on spider shutdown."""
+        if hasattr(self, "_session") and self._session is not None:
+            self._session.close()
 
     def start_requests(self) -> Generator[Request, None, None]:
         """Generate starting index requests for each configured DOU section and target date."""
         for target_date in self.date_range():
             date_formatted = target_date.strftime("%d-%m-%Y")
-            for sec_key, sec_name in self.MODERN_SECTIONS.items():
-                url = f"{self.LEITURA_JORNAL_URL}?data={date_formatted}&secao={sec_key}"
+            for sec_key, sec_name in MODERN_SECTIONS_MAP.items():
+                url = f"{LEITURA_JORNAL_BASE_URL}?data={date_formatted}&secao={sec_key}"
                 yield Request(
                     url=url,
                     callback=self.parse_modern_section,
@@ -58,6 +139,7 @@ class FederalDouSpider(BaseGazetteSpider):
                         "gazette_date": target_date,
                         "section_key": sec_key,
                         "section_name": sec_name,
+                        "position": SECTION_POSITIONS_MAP.get(sec_key, 0),
                         "is_extra": (sec_key == "doe"),
                     },
                     dont_filter=True,
@@ -74,11 +156,10 @@ class FederalDouSpider(BaseGazetteSpider):
         target_date: date = meta["gazette_date"]
         section_name: str = meta["section_name"]
         is_extra: bool = meta.get("is_extra", False)
+        position: int = meta.get("position", 0)
 
         # Extract embedded JSON data in <script id="params" type="application/json">
-        script_match = re.search(
-            r'<script id="params"[^>]*>(.*?)</script>', response.text, re.DOTALL
-        )
+        script_match = SCRIPT_PARAMS_PATTERN.search(response.text)
         if not script_match:
             return
 
@@ -94,6 +175,24 @@ class FederalDouSpider(BaseGazetteSpider):
         edition_number = str(articles[0].get("editionNumber", "1")) if articles else "1"
         total_acts = len(articles)
 
+        # Check Zero-Scrape Early-Exit condition (ADR-004)
+        if not self.force and self.repository is not None:
+            existing_edition = self.repository.get_by_territory_and_date(
+                territory_id=TerritoryId.from_code(self.territory_code),
+                date=GazetteDate.from_date(target_date),
+                section=section_name,
+            )
+            if (
+                existing_edition is not None
+                and existing_edition.ingestion_status == IngestionStatus.COMPLETED
+                and existing_edition.total_acts == total_acts
+            ):
+                self.logger.info(
+                    f"[SKIP] DOU {section_name} ({target_date.isoformat()}) already fully "
+                    f"ingested ({total_acts} acts). Skipping download (pass --force to re-crawl)."
+                )
+                return
+
         # 1. Yield Edition Container Metadata
         yield RawGazettePayload(
             territory_code=self.territory_code,
@@ -108,29 +207,25 @@ class FederalDouSpider(BaseGazetteSpider):
             power="executive",
         )
 
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-        }
-
         # 2. Concurrently fetch and stream each discrete act payload with real-time tqdm progress
-        sem = asyncio.Semaphore(25)
+        sem = asyncio.Semaphore(DEFAULT_CONCURRENT_SEMAPHORE)
 
         async with httpx.AsyncClient(
-            headers=headers,
-            timeout=20.0,
-            limits=httpx.Limits(max_connections=50, max_keepalive_connections=30),
+            headers=DEFAULT_BROWSER_HEADERS,
+            timeout=DEFAULT_HTTP_TIMEOUT_SECONDS,
+            limits=httpx.Limits(
+                max_connections=DEFAULT_MAX_CONNECTIONS,
+                max_keepalive_connections=DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
+            ),
         ) as client:
             with tqdm(
                 total=total_acts,
                 desc=f"DOU {section_name}",
                 unit="ato",
                 dynamic_ncols=True,
+                position=position,
                 leave=True,
+                mininterval=DEFAULT_TQDM_MIN_INTERVAL_SECONDS,
             ) as pbar:
 
                 async def _fetch_act(
@@ -145,7 +240,7 @@ class FederalDouSpider(BaseGazetteSpider):
 
                         hierarchy_parts = [p.strip() for p in hierarchy_str.split("/") if p.strip()]
                         article_url = (
-                            f"{self.ARTICLE_BASE_URL}{url_title}" if url_title else response.url
+                            f"{ARTICLE_READ_BASE_URL}{url_title}" if url_title else response.url
                         )
 
                         body_text = ""
@@ -233,11 +328,7 @@ class FederalDouSpider(BaseGazetteSpider):
         if not title:
             return default_type.upper(), None, target_year
 
-        match = re.search(
-            r"^([A-ZÁÉÍÓÚÂÊÔÃÕÇ\s\/\-]+?)(?:\s+(?:[Nn][º°o\.]\s*))([0-9\.\-\/]+)?(?:.*?(?:DE\s+\d+\s+DE\s+[A-Za-zçãéíóúáâêô]+\s+DE\s+(\d{4})))?",
-            title,
-            re.IGNORECASE,
-        )
+        match = ACT_TYPOLOGY_PATTERN.search(title)
         if match:
             act_type = match.group(1).strip().upper()
             num = match.group(2).strip() if match.group(2) else None

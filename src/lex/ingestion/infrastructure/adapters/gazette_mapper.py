@@ -6,6 +6,7 @@ spiders into strictly validated GazetteEdition and NormativeAct domain entities.
 
 import re
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, date, datetime
 
 from lex.ingestion.application.ports import StreamTextExtractorPort
@@ -26,6 +27,12 @@ from lex.ingestion.infrastructure.dto import (
     RawGazettePayload,
     RawNormativeActPayload,
 )
+
+# -----------------------------------------------------------------------------
+# Module Constants & Date Patterns (ADR-003)
+# -----------------------------------------------------------------------------
+ISO_DATE_PATTERN: re.Pattern[str] = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+BRAZILIAN_DATE_FORMATS: Sequence[str] = ("%d/%m/%Y", "%d-%m-%Y")
 
 
 class GazetteMapper:
@@ -115,7 +122,7 @@ class GazetteMapper:
         raw_str = payload.raw_date_str.strip()
 
         # Try ISO format YYYY-MM-DD
-        if re.match(r"^\d{4}-\d{2}-\d{2}$", raw_str):
+        if ISO_DATE_PATTERN.match(raw_str):
             try:
                 return datetime.strptime(raw_str, "%Y-%m-%d").replace(tzinfo=UTC).date()
             except ValueError as exc:
@@ -123,7 +130,7 @@ class GazetteMapper:
                 raise InvalidGazetteDateError(err_msg) from exc
 
         # Try Brazilian formats DD/MM/YYYY or DD-MM-YYYY
-        for fmt in ("%d/%m/%Y", "%d-%m-%Y"):
+        for fmt in BRAZILIAN_DATE_FORMATS:
             try:
                 return datetime.strptime(raw_str, fmt).replace(tzinfo=UTC).date()
             except ValueError:

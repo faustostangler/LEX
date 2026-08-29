@@ -57,6 +57,28 @@ class LexSettings(BaseSettings):
         gt=0.0,
     )
 
+    # Federal DOU Scraping Concurrency & Timeouts
+    dou_concurrent_acts_semaphore: int = Field(
+        default=25,
+        description="Concurrency limit for discrete DOU act scraping per section",
+        gt=0,
+    )
+    dou_http_timeout_seconds: float = Field(
+        default=20.0,
+        description="HTTP request timeout for DOU discrete act fetching",
+        gt=0.0,
+    )
+    dou_max_connections: int = Field(
+        default=50,
+        description="HTTP client max connection pool size for DOU",
+        gt=0,
+    )
+    dou_max_keepalive_connections: int = Field(
+        default=30,
+        description="HTTP client max keepalive connections for DOU",
+        gt=0,
+    )
+
     # Logging & Observability
     log_level: str = Field(
         default="INFO",

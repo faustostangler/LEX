@@ -13,14 +13,22 @@ from scrapy.crawler import Crawler
 from scrapy.exceptions import IgnoreRequest
 from scrapy.http import Request, Response
 
+# -----------------------------------------------------------------------------
+# Module Constants (ADR-003)
+# -----------------------------------------------------------------------------
+DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = 5
+DEFAULT_CIRCUIT_BREAKER_RESET_TIMEOUT: float = 60.0
+CIRCUIT_BREAKER_ERROR_STATUSES: tuple[int, ...] = (429, 503)
+HTTP_OK_STATUS: int = 200
+
 
 class DomainCircuitBreakerMiddleware:
     """Monitors per-domain failure rates and trips a circuit breaker on thresholds."""
 
     def __init__(
         self,
-        failure_threshold: int = 5,
-        reset_timeout: float = 60.0,
+        failure_threshold: int = DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+        reset_timeout: float = DEFAULT_CIRCUIT_BREAKER_RESET_TIMEOUT,
     ) -> None:
         self.failure_threshold = failure_threshold
         self.reset_timeout = reset_timeout
@@ -30,8 +38,14 @@ class DomainCircuitBreakerMiddleware:
     @classmethod
     def from_crawler(cls, crawler: Crawler) -> "DomainCircuitBreakerMiddleware":
         settings = crawler.settings
-        failure_threshold = settings.getint("CIRCUIT_BREAKER_FAILURE_THRESHOLD", 5)
-        reset_timeout = settings.getfloat("CIRCUIT_BREAKER_RESET_TIMEOUT", 60.0)
+        failure_threshold = settings.getint(
+            "CIRCUIT_BREAKER_FAILURE_THRESHOLD",
+            DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+        )
+        reset_timeout = settings.getfloat(
+            "CIRCUIT_BREAKER_RESET_TIMEOUT",
+            DEFAULT_CIRCUIT_BREAKER_RESET_TIMEOUT,
+        )
         return cls(failure_threshold=failure_threshold, reset_timeout=reset_timeout)
 
     def _get_domain(self, request_or_url: str | Request) -> str:
@@ -70,9 +84,9 @@ class DomainCircuitBreakerMiddleware:
         """Track response status codes for rate-limits (429) or service outages (503)."""
         domain = self._get_domain(request)
 
-        if response.status in (429, 503):
+        if response.status in CIRCUIT_BREAKER_ERROR_STATUSES:
             self._record_failure(domain)
-        elif response.status == 200:
+        elif response.status == HTTP_OK_STATUS:
             self._failures[domain] = 0
             if domain in self._tripped_at:
                 del self._tripped_at[domain]

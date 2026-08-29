@@ -7,6 +7,7 @@ Defaults to 'crawl federal_dou' when executed without explicit sub-commands.
 import argparse
 import sys
 from datetime import date
+from typing import Any
 
 from scrapy.crawler import CrawlerProcess
 from scrapy.utils.project import get_project_settings
@@ -15,12 +16,18 @@ from sqlalchemy import create_engine, text
 from lex.ingestion.infrastructure.persistence.models import Base
 from lex.shared_kernel.config import LexSettings
 
+# -----------------------------------------------------------------------------
+# Module Constants (ADR-003)
+# -----------------------------------------------------------------------------
+DEFAULT_FALLBACK_CRAWL_DATE: str = "2024-01-15"
+DEFAULT_SPIDER_NAME: str = "federal_dou"
+
 
 def get_default_crawl_date() -> str:
     """Return default target date for crawling (guaranteeing valid gazettes)."""
     today = date.today()
     if today.year > 2024:
-        return "2024-01-15"
+        return DEFAULT_FALLBACK_CRAWL_DATE
     return today.isoformat()
 
 
@@ -49,18 +56,25 @@ def init_db() -> None:
     print("Database schema successfully initialized.")
 
 
-def run_crawler(spider_name: str, start_date: str | None, end_date: str | None) -> None:
+def run_crawler(
+    spider_name: str,
+    start_date: str | None,
+    end_date: str | None,
+    force: bool = False,
+) -> None:
     """Execute Scrapy crawler process for target spider and date interval."""
     settings = get_project_settings()
     process = CrawlerProcess(settings)
 
     default_date = get_default_crawl_date()
-    spider_args: dict[str, str] = {}
+    spider_args: dict[str, Any] = {}
     spider_args["start_date"] = start_date or default_date
     spider_args["end_date"] = end_date or start_date or default_date
+    spider_args["force"] = force
 
     interval_msg = f"{spider_args['start_date']} -> {spider_args['end_date']}"
-    print(f"Starting spider '{spider_name}' (interval: {interval_msg})...")
+    force_msg = " [FORCE OVERRIDE]" if force else ""
+    print(f"Starting spider '{spider_name}' (interval: {interval_msg}){force_msg}...")
     process.crawl(spider_name, **spider_args)
     process.start()
 
@@ -84,7 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
     crawl_parser.add_argument(
         "spider",
         nargs="?",
-        default="federal_dou",
+        default=DEFAULT_SPIDER_NAME,
         help="Spider name (default: federal_dou). Options: federal_dou, state_sp, etc.",
     )
     crawl_parser.add_argument(
@@ -97,6 +111,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="End date (YYYY-MM-DD)",
         default=None,
     )
+    crawl_parser.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Force re-scraping and downloading even if already completed.",
+    )
 
     return parser
 
@@ -107,14 +127,14 @@ def parse_cli_args(args: list[str] | None = None) -> argparse.Namespace:
 
     # Pre-process arguments to allow 'crawl' as default command
     if not raw_args:
-        raw_args = ["crawl", "federal_dou"]
+        raw_args = ["crawl", DEFAULT_SPIDER_NAME]
     elif raw_args[0] not in ("init-db", "crawl", "-h", "--help"):
         if not raw_args[0].startswith("-"):
             # First argument is spider name (e.g. `lex state_sp`)
             raw_args = ["crawl"] + raw_args
         else:
             # First argument is a flag (e.g. `lex --start-date 2024-01-02`)
-            raw_args = ["crawl", "federal_dou"] + raw_args
+            raw_args = ["crawl", DEFAULT_SPIDER_NAME] + raw_args
 
     parser = build_parser()
     return parser.parse_args(raw_args)
@@ -127,7 +147,12 @@ def main(args: list[str] | None = None) -> None:
     if parsed_args.command == "init-db":
         init_db()
     elif parsed_args.command == "crawl":
-        run_crawler(parsed_args.spider, parsed_args.start_date, parsed_args.end_date)
+        run_crawler(
+            parsed_args.spider,
+            parsed_args.start_date,
+            parsed_args.end_date,
+            force=parsed_args.force,
+        )
     else:
         build_parser().print_help()
 

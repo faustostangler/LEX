@@ -68,6 +68,12 @@ ITEM_PIPELINES = {
     INGESTION_PL: 300,
 }
 
+# Disable periodic terminal noise extensions to maintain clean tqdm rendering
+EXTENSIONS = {
+    "scrapy.extensions.logstats.LogStats": None,
+    "scrapy.extensions.telnet.TelnetConsole": None,
+}
+
 # Circuit Breaker Defaults
 CIRCUIT_BREAKER_FAILURE_THRESHOLD = 5
 CIRCUIT_BREAKER_RESET_TIMEOUT = 60.0
