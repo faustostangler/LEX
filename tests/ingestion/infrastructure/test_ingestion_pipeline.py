@@ -44,8 +44,10 @@ class DummyRepository:
         self.saved_editions: list[GazetteEdition] = []
         self.saved_acts: list[NormativeAct] = []
 
-    def save(self, edition: GazetteEdition) -> None:
-        self.saved_editions.append(edition)
+    def save(self, edition: GazetteEdition) -> GazetteEdition:
+        persisted = edition.model_copy(update={"id": edition.id or uuid.uuid4()})
+        self.saved_editions.append(persisted)
+        return persisted
 
     def save_normative_act(self, act: NormativeAct) -> None:
         self.saved_acts.append(act)

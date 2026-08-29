@@ -14,6 +14,7 @@ from datetime import date
 import httpx
 from bs4 import BeautifulSoup
 from scrapy.http import HtmlResponse, Request, Response
+from tqdm import tqdm
 
 from lex.ingestion.infrastructure.dto import (
     RawGazettePayload,
@@ -107,10 +108,6 @@ class FederalDouSpider(BaseGazetteSpider):
             power="executive",
         )
 
-        self.logger.info(
-            f"Streaming {total_acts} discrete acts for {section_name} ({target_date})..."
-        )
-
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -120,7 +117,7 @@ class FederalDouSpider(BaseGazetteSpider):
             "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
         }
 
-        # 2. Concurrently fetch and stream each discrete act payload
+        # 2. Concurrently fetch and stream each discrete act payload with real-time tqdm progress
         sem = asyncio.Semaphore(25)
 
         async with httpx.AsyncClient(
@@ -128,93 +125,105 @@ class FederalDouSpider(BaseGazetteSpider):
             timeout=20.0,
             limits=httpx.Limits(max_connections=50, max_keepalive_connections=30),
         ) as client:
+            with tqdm(
+                total=total_acts,
+                desc=f"DOU {section_name}",
+                unit="ato",
+                dynamic_ncols=True,
+                leave=True,
+            ) as pbar:
 
-            async def _fetch_act(
-                art: dict[str, object],
-            ) -> RawNormativeActPayload | None:
-                url_title = str(art.get("urlTitle", "")).strip()
-                hierarchy_str = str(art.get("hierarchyStr", "")).strip()
-                title = str(art.get("title", "")).strip()
-                preview = str(art.get("content", "")).strip()
-                art_type_raw = str(art.get("artType", "")).strip()
-
-                hierarchy_parts = [p.strip() for p in hierarchy_str.split("/") if p.strip()]
-                article_url = f"{self.ARTICLE_BASE_URL}{url_title}" if url_title else response.url
-
-                body_text = ""
-                ementa: str | None = None
-                authority_name: str | None = None
-                authority_role: str | None = None
-
-                if url_title:
+                async def _fetch_act(
+                    art: dict[str, object],
+                ) -> RawNormativeActPayload | None:
                     try:
-                        async with sem:
-                            resp = await client.get(article_url)
-                            if resp.status_code == 200:
-                                soup = BeautifulSoup(resp.text, "html.parser")
-                                div = soup.find("div", class_="texto-dou") or soup.find(
-                                    "div", id="materia"
-                                )
-                                if div:
-                                    body_text = div.get_text(separator="\n", strip=True)
+                        url_title = str(art.get("urlTitle", "")).strip()
+                        hierarchy_str = str(art.get("hierarchyStr", "")).strip()
+                        title = str(art.get("title", "")).strip()
+                        preview = str(art.get("content", "")).strip()
+                        art_type_raw = str(art.get("artType", "")).strip()
 
-                                ementa_el = soup.find(class_="ementa")
-                                if ementa_el:
-                                    ementa = ementa_el.get_text(strip=True)
+                        hierarchy_parts = [p.strip() for p in hierarchy_str.split("/") if p.strip()]
+                        article_url = (
+                            f"{self.ARTICLE_BASE_URL}{url_title}" if url_title else response.url
+                        )
 
-                                assina_el = soup.find(class_="assina")
-                                if assina_el:
-                                    authority_name = assina_el.get_text(strip=True)
+                        body_text = ""
+                        ementa: str | None = None
+                        authority_name: str | None = None
+                        authority_role: str | None = None
 
-                                cargo_el = soup.find(class_="cargo")
-                                if cargo_el:
-                                    authority_role = cargo_el.get_text(strip=True)
-                    except (httpx.HTTPError, TimeoutError) as exc:
-                        self.logger.debug(f"Article fetch failed for {url_title}: {exc}")
+                        if url_title:
+                            try:
+                                async with sem:
+                                    resp = await client.get(article_url)
+                                    if resp.status_code == 200:
+                                        soup = BeautifulSoup(resp.text, "html.parser")
+                                        div = soup.find("div", class_="texto-dou") or soup.find(
+                                            "div", id="materia"
+                                        )
+                                        if div:
+                                            body_text = div.get_text(separator="\n", strip=True)
 
-                if not body_text:
-                    body_text = preview or title
+                                        ementa_el = soup.find(class_="ementa")
+                                        if ementa_el:
+                                            ementa = ementa_el.get_text(strip=True)
 
-                if not body_text:
-                    return None
+                                        assina_el = soup.find(class_="assina")
+                                        if assina_el:
+                                            authority_name = assina_el.get_text(strip=True)
 
-                # Derive parsed typology, number and year
-                (
-                    act_type,
-                    act_number,
-                    act_year,
-                ) = self._parse_act_type_and_number(
-                    title,
-                    default_type=art_type_raw or "OUTROS",
-                    target_year=target_date.year,
-                )
+                                        cargo_el = soup.find(class_="cargo")
+                                        if cargo_el:
+                                            authority_role = cargo_el.get_text(strip=True)
+                            except (httpx.HTTPError, TimeoutError) as exc:
+                                self.logger.debug(f"Article fetch failed for {url_title}: {exc}")
 
-                return RawNormativeActPayload(
-                    territory_code=self.territory_code,
-                    source_url=article_url,
-                    raw_content=body_text,
-                    title=title or act_type,
-                    act_type=act_type,
-                    date_obj=target_date,
-                    act_number=act_number,
-                    act_year=act_year,
-                    ementa=ementa,
-                    hierarchy=hierarchy_parts,
-                    authority_name=authority_name,
-                    authority_role=authority_role,
-                    edition_number=edition_number,
-                    section=section_name,
-                    is_extra_edition=is_extra,
-                    classification_source="pre_segmented_source",
-                    classification_confidence=1.0,
-                )
+                        if not body_text:
+                            body_text = preview or title
 
-            tasks = [_fetch_act(art) for art in articles]
-            results = await asyncio.gather(*tasks)
+                        if not body_text:
+                            return None
 
-            for act_payload in results:
-                if act_payload is not None:
-                    yield act_payload
+                        # Derive parsed typology, number and year
+                        (
+                            act_type,
+                            act_number,
+                            act_year,
+                        ) = self._parse_act_type_and_number(
+                            title,
+                            default_type=art_type_raw or "OUTROS",
+                            target_year=target_date.year,
+                        )
+
+                        return RawNormativeActPayload(
+                            territory_code=self.territory_code,
+                            source_url=article_url,
+                            raw_content=body_text,
+                            title=title or act_type,
+                            act_type=act_type,
+                            date_obj=target_date,
+                            act_number=act_number,
+                            act_year=act_year,
+                            ementa=ementa,
+                            hierarchy=hierarchy_parts,
+                            authority_name=authority_name,
+                            authority_role=authority_role,
+                            edition_number=edition_number,
+                            section=section_name,
+                            is_extra_edition=is_extra,
+                            classification_source="pre_segmented_source",
+                            classification_confidence=1.0,
+                        )
+                    finally:
+                        pbar.update(1)
+
+                tasks = [_fetch_act(art) for art in articles]
+                results = await asyncio.gather(*tasks)
+
+                for act_payload in results:
+                    if act_payload is not None:
+                        yield act_payload
 
     @staticmethod
     def _parse_act_type_and_number(

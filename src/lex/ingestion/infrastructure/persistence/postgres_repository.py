@@ -33,12 +33,13 @@ class PostgresGazetteRepository(GazetteRepositoryPort):
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def save(self, edition: GazetteEdition) -> None:
-        """Persist a GazetteEdition container record with idempotent upsert."""
+    def save(self, edition: GazetteEdition) -> GazetteEdition:
+        """Persist a GazetteEdition container record with idempotent upsert and return entity."""
         bind = self._session.get_bind()
         is_postgres = bind is not None and bind.dialect.name == "postgresql"
 
         try:
+            persisted_id: uuid.UUID
             if is_postgres:
                 stmt = pg_insert(GazetteEditionModel).values(
                     id=edition.id or uuid.uuid4(),
@@ -64,8 +65,8 @@ class PostgresGazetteRepository(GazetteRepositoryPort):
                         "source_url": stmt.excluded.source_url,
                         "updated_at": datetime.now(UTC),
                     },
-                )
-                self._session.execute(upsert_stmt)
+                ).returning(GazetteEditionModel.id)
+                persisted_id = self._session.execute(upsert_stmt).scalar_one()
             else:
                 existing = self._session.execute(
                     select(GazetteEditionModel).where(
@@ -83,9 +84,11 @@ class PostgresGazetteRepository(GazetteRepositoryPort):
                     existing.ingestion_status = edition.ingestion_status.value
                     existing.source_url = edition.source_url
                     existing.updated_at = datetime.now(UTC)
+                    persisted_id = existing.id
                 else:
+                    persisted_id = edition.id or uuid.uuid4()
                     model = GazetteEditionModel(
-                        id=edition.id or uuid.uuid4(),
+                        id=persisted_id,
                         territory_id=edition.territory_id.code,
                         tier=edition.tier.value,
                         date=edition.date.value,
@@ -102,6 +105,7 @@ class PostgresGazetteRepository(GazetteRepositoryPort):
                     self._session.add(model)
 
             self._session.commit()
+            return edition.model_copy(update={"id": persisted_id})
         except Exception:
             self._session.rollback()
             raise

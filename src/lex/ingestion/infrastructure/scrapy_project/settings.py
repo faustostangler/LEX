@@ -78,4 +78,6 @@ RETRY_MAX_DELAY = 60.0
 RETRY_TIMES = 3
 RETRY_HTTP_CODES = [408, 429, 500, 502, 503, 504]
 
-LOG_LEVEL = "DEBUG"  # "INFO" Silencia os logs DEBUG do Scrapy
+# Clean Terminal Logging & Progress Configuration
+LOG_LEVEL = "INFO"
+LOG_SCRAPED_ITEMS = False

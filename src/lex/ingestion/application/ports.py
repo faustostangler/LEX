@@ -19,8 +19,8 @@ from lex.ingestion.domain.value_objects import (
 class GazetteRepositoryPort(Protocol):
     """Outbound port for persisting and retrieving GazetteEdition aggregates and NormativeActs."""
 
-    def save(self, edition: GazetteEdition) -> None:
-        """Persist a gazette edition with idempotent ON CONFLICT semantics."""
+    def save(self, edition: GazetteEdition) -> GazetteEdition:
+        """Persist a gazette edition with idempotent ON CONFLICT semantics, returning entity."""
         ...
 
     def get_by_territory_and_date(

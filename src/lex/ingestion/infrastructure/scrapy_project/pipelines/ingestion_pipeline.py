@@ -67,9 +67,8 @@ class GazetteIngestionPipeline:
         if isinstance(item, RawGazettePayload):
             try:
                 edition = self._mapper.to_domain(item)
-                edition_id = edition.id or uuid.uuid4()
-                edition_with_id = edition.model_copy(update={"id": edition_id})
-                self._repository.save(edition_with_id)
+                saved_edition = self._repository.save(edition)
+                persisted_id = saved_edition.id or uuid.uuid4()
 
                 cache_key = (
                     item.territory_code,
@@ -78,7 +77,7 @@ class GazetteIngestionPipeline:
                     str(item.edition_number or ""),
                     item.is_extra_edition,
                 )
-                self._edition_id_cache[cache_key] = edition_id
+                self._edition_id_cache[cache_key] = persisted_id
             except Exception as exc:
                 logger.error(f"Error persisting edition container {item.source_url}: {exc}")
 
@@ -103,7 +102,22 @@ class GazetteIngestionPipeline:
                 if existing_edition is not None and existing_edition.id is not None:
                     final_edition_id = existing_edition.id
                 else:
-                    final_edition_id = uuid.uuid4()
+                    # Dynamically create container edition to ensure referential integrity
+                    synth_payload = RawGazettePayload(
+                        territory_code=item.territory_code,
+                        tier="federal",
+                        source_url=item.source_url,
+                        raw_content=f"Auto-generated container ({item.date_obj})",
+                        total_acts=0,
+                        date_obj=item.date_obj,
+                        section=item.section,
+                        edition_number=item.edition_number,
+                        is_extra_edition=item.is_extra_edition,
+                    )
+                    synth_edition = self._mapper.to_domain(synth_payload)
+                    saved_synth = self._repository.save(synth_edition)
+                    final_edition_id = saved_synth.id or uuid.uuid4()
+
                 self._edition_id_cache[cache_key] = final_edition_id
 
             try:
