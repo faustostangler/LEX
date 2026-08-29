@@ -96,4 +96,4 @@ ignore_missing_imports = true
 
 [tool.mutmut]
 source_paths = ["src/lex/ingestion/domain/"]
-tests_dir = ["tests/ingestion/domain/"]
+pytest_add_cli_args_test_selection = ["tests/ingestion/domain/"]
