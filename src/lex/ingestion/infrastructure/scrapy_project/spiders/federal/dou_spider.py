@@ -50,6 +50,7 @@ DEFAULT_TQDM_MIN_INTERVAL_SECONDS: float = 0.2
 DEFAULT_TQDM_BAR_FORMAT: str = (
     "{desc}: {percentage:3.0f}%|{bar}| {n:4d}/{total:4d} [{elapsed}<{remaining}, {rate_fmt}]"
 )
+DEFAULT_ACT_BATCH_SIZE: int = 50
 
 LEITURA_JORNAL_BASE_URL: str = "https://www.in.gov.br/leiturajornal"
 ARTICLE_READ_BASE_URL: str = "https://www.in.gov.br/web/dou/-/"
@@ -332,12 +333,14 @@ class FederalDouSpider(BaseGazetteSpider):
                     finally:
                         pbar.update(1)
 
-                tasks = [_fetch_act(art) for art in articles]
-                results = await asyncio.gather(*tasks)
+                for i in range(0, len(articles), DEFAULT_ACT_BATCH_SIZE):
+                    chunk = articles[i : i + DEFAULT_ACT_BATCH_SIZE]
+                    tasks = [_fetch_act(art) for art in chunk]
+                    results = await asyncio.gather(*tasks)
 
-                for act_payload in results:
-                    if act_payload is not None:
-                        yield act_payload
+                    for act_payload in results:
+                        if act_payload is not None:
+                            yield act_payload
 
     @staticmethod
     def _parse_act_type_and_number(

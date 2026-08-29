@@ -3,35 +3,41 @@
 """Export database tables from PostgreSQL to Google Sheets-compatible CSV files.
 
 Implements programmatic Water-Filling Binary Search optimization to guarantee
-the final CSV file strictly fits within Google Sheets upload limits (< 100 MB hard cap;
-default: <= 80 MB) without dropping any rows or columns.
+the final CSV file strictly fits within Google Sheets upload limits (< 50 MB;
+default: <= 48 MB) without dropping any core normative acts or truncating reference URLs.
 
 Compliant with Google Drive & Google Sheets official limits:
 Reference: https://support.google.com/drive/answer/37603
 
 Key Optimizations:
-1. Guaranteed File Size Fit (<= 80 MB by default):
-   - Uses Water-Filling Binary Search with full delimiter & escaping accounting
-     to compute the exact optimal Head-Tail sandwich truncation per cell.
-   - 100% of rows are included; zero rows dropped.
-2. Clean Spreadsheet Columns (Human/Analyst Focused):
+1. Integral Reference URLs (source_url):
+   - The `source_url` column is NEVER truncated under any circumstances.
+2. Guaranteed File Size Fit (<= 48 MB by default):
+   - Uses Water-Filling Binary Search to compute the exact optimal Head-Tail sandwich
+     truncation for `raw_content` per cell across all rows.
+   - If needed to fit <= 48 MB, `raw_content` is truncated while preserving full metadata and URLs.
+3. Noise Act Filtering (High-Value Normative Focus):
+   - By default filters out non-normative administrative noise (Avisos, Extratos, Retificações,
+     Resultados, Julgamentos, Comunicados, Notas, Pautas) to ensure the 50 MB budget
+     is dedicated to real normative acts (Portarias, Resoluções, Decretos, Leis, etc.).
+   - Use `--no-filter-noise-acts` to disable this filter.
+4. Clean Spreadsheet Columns (Human/Analyst Focused):
    - Omits internal DB plumbing (hashes, internal FKs, raw JSON blobs, duplicate timestamps)
      by default to free up 35+ MB of budget for actual legal text (`raw_content`).
    - Use `--all-columns` to include every database column if needed.
-3. Max Characters per Cell (50,000 chars hard limit):
-   - Google Drive rule: "any cell with more than 50,000 characters will be removed in Sheets."
+5. Max Characters per Cell (50,000 chars hard limit):
    - Hard capped at <= 45,000 chars with 80% Head (preamble/articles) and 18% Tail (signatures).
-4. CSV Formula Injection Defense:
+6. CSV Formula Injection Defense:
    - Disarms leading '=', '+', '-', '@', '\\t', '\\r' with a single quote (').
-5. Semantic JSON Flattening:
+7. Semantic JSON Flattening:
    - Converts hierarchy lists to breadcrumbs ('Ministry > Dept') for instant spreadsheet filtering.
 
 Usage:
-    # Export all tables (auto-fit to <= 50 MB, 100% Google Sheets approved)
+    # Export all tables (guaranteed <= 48 MB, 100% Google Sheets approved)
     python playground/export_table_to_csv.py
 
     # Export a specific table with custom target size
-    python playground/export_table_to_csv.py --table normative_acts --max-file-mb 50.0
+    python playground/export_table_to_csv.py --table normative_acts --max-file-mb 48.0
 
     # Export a specific date with full text (K=45,000 chars)
     python playground/export_table_to_csv.py --table normative_acts --date 2026-08-28
@@ -63,8 +69,8 @@ GOOGLE_SHEETS_MAX_COLUMNS = 18278  # Column ZZZ
 GOOGLE_SHEETS_MAX_UPLOAD_MB = 100.0  # 100 MB hard limit for CSV/XLSX web import
 GOOGLE_SHEETS_RECOMMENDED_MAX_MB = 50.0  # <= 50 MB recommended for browser stability
 
-# Default target file size: 50 MB provides a solid 20 MB safety margin under Google's 100 MB cap
-DEFAULT_TARGET_MAX_FILE_MB = 50.0
+# Default target file size: 48 MB provides a safe margin under Google's 50 MB limit
+DEFAULT_TARGET_MAX_FILE_MB = 48.0
 
 # Safe defaults to prevent silent removal and stay within Google limits
 DEFAULT_MAX_CELL_CHARS = 45000  # 5,000 char safety margin under 50k hard cap
@@ -79,9 +85,25 @@ INTERNAL_DB_COLUMNS = {
     "metadata_json",  # Raw internal JSON metadata
     "classification_source",  # ML/Scraper internal tag
     "classification_confidence",  # ML internal float
-    "scraped_at",  # Redundant with created_at
+    "scraped_at",  # Internal DB ingestion timestamp
+    "created_at",  # Internal DB creation timestamp (business date is in 'date' column)
     "updated_at",  # Internal DB timestamp
 }
+
+# Non-normative noise act types filtered out by default to focus 50 MB on core normative acts
+NOISE_ACT_TYPES = (
+    "COMUNICADO",
+    "NOTA",
+    "PAUTA",
+    "RETIFICAÇÃO",
+    "RETIFICACAO",
+    "RERRATIFICAÇÃO",
+    "RERRATIFICACAO",
+    "RESULTADO",
+    "JULGAMENTO",
+    "AVISO",
+    "EXTRATO",
+)
 
 # Characters that trigger formula execution in Google Sheets / Excel
 INJECTION_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
@@ -109,7 +131,7 @@ def calculate_optimal_sandwich_budget(
     Args:
         text_lengths: Character/byte lengths of the heavy column for each row.
         metadata_total_bytes: Total bytes consumed by metadata columns and CSV delimiters.
-        target_max_bytes: Maximum target file size in bytes (e.g. 80 MB).
+        target_max_bytes: Maximum target file size in bytes (e.g. 48 MB).
         max_cell_cap: Hard maximum characters per cell (<= 45,000).
 
     Returns:
@@ -125,8 +147,8 @@ def calculate_optimal_sandwich_budget(
     available_content_budget = effective_target_bytes - metadata_total_bytes
 
     if available_content_budget <= 0:
-        # Metadata alone approaches target budget; enforce minimal compact threshold
-        return 50, 35, 15
+        # Metadata alone approaches target budget; omit text body to guarantee file size fit
+        return 0, 0, 0
 
     # Check if untruncated content fits within budget
     total_untruncated = sum(
@@ -141,7 +163,7 @@ def calculate_optimal_sandwich_budget(
     # Binary search for the maximum K in [50, max_cell_cap]
     low = 50
     high = max_cell_cap
-    optimal_k = low
+    optimal_k = 0
 
     while low <= high:
         mid = (low + high) // 2
@@ -211,7 +233,7 @@ def sanitize_cell_value(
     val: Any,
     source_url: str | None = None,
     escape_newlines: bool = True,
-    max_cell_chars: int = DEFAULT_MAX_CELL_CHARS,
+    max_cell_chars: int | None = DEFAULT_MAX_CELL_CHARS,
     head_chars: int = int(DEFAULT_MAX_CELL_CHARS * DEFAULT_HEAD_RATIO),
     tail_chars: int = int(DEFAULT_MAX_CELL_CHARS * DEFAULT_TAIL_RATIO),
     escape_formulas: bool = True,
@@ -247,7 +269,11 @@ def sanitize_cell_value(
         text_val = text_val.replace("\r\n", "\\n").replace("\r", "\\n").replace("\n", "\\n")
 
     # 4. Head-Tail Sandwich Truncation for cells exceeding computed limit
-    if max_cell_chars > 0 and len(text_val) > max_cell_chars:
+    if max_cell_chars == 0 and len(text_val) > 0:
+        # Budget is 0: omit text body to guarantee file size limit
+        text_val = ""
+        was_truncated = True
+    elif max_cell_chars is not None and max_cell_chars > 0 and len(text_val) > max_cell_chars:
         orig_len = len(text_val)
         effective_head = min(head_chars, max_cell_chars - 30)
         effective_tail = min(tail_chars, max_cell_chars - effective_head - 10)
@@ -287,6 +313,7 @@ def export_single_table(
     output_file: Path,
     target_date: str | None = None,
     limit: int | None = None,
+    filter_noise_acts: bool = True,
     max_file_mb: float = DEFAULT_TARGET_MAX_FILE_MB,
     auto_fit: bool = True,
     escape_newlines: bool = True,
@@ -316,6 +343,11 @@ def export_single_table(
     if target_date and "date" in column_names:
         where_clauses.append("date = :target_date")
         params["target_date"] = target_date
+
+    if filter_noise_acts and table_name == "normative_acts" and "act_type" in column_names:
+        for i, noise_type in enumerate(NOISE_ACT_TYPES):
+            where_clauses.append(f"act_type NOT ILIKE :noise_type_{i}")
+            params[f"noise_type_{i}"] = f"%{noise_type}%"
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
     limit_sql = f"LIMIT {limit}" if limit else ""
@@ -385,13 +417,29 @@ def export_single_table(
 
                 for col in column_names:
                     raw_val = row_dict.get(col)
+                    # The dynamic water-filling budget (k_chars) is applied ONLY to heavy content
+                    # columns (e.g. raw_content). Critical reference fields like source_url, title,
+                    # ementa, and hierarchy are NEVER truncated and remain 100% integral.
+                    if col == heavy_column:
+                        col_max = k_chars
+                        col_head = head_chars
+                        col_tail = tail_chars
+                    elif col == "source_url":
+                        col_max = None  # Never truncate source_url under any circumstances!
+                        col_head = 0
+                        col_tail = 0
+                    else:
+                        col_max = DEFAULT_MAX_CELL_CHARS
+                        col_head = int(DEFAULT_MAX_CELL_CHARS * DEFAULT_HEAD_RATIO)
+                        col_tail = int(DEFAULT_MAX_CELL_CHARS * DEFAULT_TAIL_RATIO)
+
                     formatted_val, was_truncated = sanitize_cell_value(
                         val=raw_val,
                         source_url=str(source_url) if source_url else None,
                         escape_newlines=escape_newlines,
-                        max_cell_chars=k_chars,
-                        head_chars=head_chars,
-                        tail_chars=tail_chars,
+                        max_cell_chars=col_max,
+                        head_chars=col_head,
+                        tail_chars=col_tail,
                         escape_formulas=escape_formulas,
                     )
                     if was_truncated:
@@ -448,8 +496,14 @@ def main() -> None:
         default=DEFAULT_TARGET_MAX_FILE_MB,
         help=(
             f"Target maximum CSV file size in MB (default: {DEFAULT_TARGET_MAX_FILE_MB:.1f} MB; "
-            f"safe under Google Sheets {GOOGLE_SHEETS_MAX_UPLOAD_MB:.0f} MB upload limit)"
+            f"safe under Google Sheets {GOOGLE_SHEETS_RECOMMENDED_MAX_MB:.0f} MB upload limit)"
         ),
+    )
+    parser.add_argument(
+        "--no-filter-noise-acts",
+        action="store_true",
+        default=False,
+        help="Do not filter out non-normative noise acts (Avisos, Extratos, Retificações, etc.)",
     )
     parser.add_argument(
         "--no-auto-fit",
@@ -529,11 +583,13 @@ def main() -> None:
         tables_to_export = [args.table]
         target_dir = DEFAULT_OUTPUT_DIR
 
+    filter_noise = not args.no_filter_noise_acts
+
     print(f"[*] Starting CSV export for {len(tables_to_export)} table(s) from PostgreSQL...")
     print("[*] Google Drive & Sheets Optimization Strategy (answer/37603):")
     print(
         f"    • Target File Cap: <= {args.max_file_mb:.1f} MB "
-        f"[Google limit: {GOOGLE_SHEETS_MAX_UPLOAD_MB:.0f} MB upload limit]"
+        f"[Google limit: {GOOGLE_SHEETS_RECOMMENDED_MAX_MB:.0f} MB upload limit]"
     )
     opt_algo = (
         "Water-Filling Binary Search (Auto-Fit)"
@@ -547,6 +603,11 @@ def main() -> None:
         else "Clean Spreadsheet Columns (Internal DB plumbing omitted)"
     )
     print(f"    • Column Selection: {col_desc}")
+    print(
+        f"    • Noise Act Filter: "
+        f"{'Enabled (Avisos, Extratos, Retificações excluded)' if filter_noise else 'Disabled'}"
+    )
+    print("    • Reference URLs (source_url): 100% Integral (Never Truncated)")
     print(f"    • Spreadsheet cell capacity cap: {GOOGLE_SHEETS_MAX_TOTAL_CELLS:,} total cells")
     print(
         f"    • Formula injection defense: "
@@ -581,6 +642,7 @@ def main() -> None:
             output_file=out_file,
             target_date=args.date,
             limit=args.limit,
+            filter_noise_acts=filter_noise,
             max_file_mb=args.max_file_mb,
             auto_fit=auto_fit,
             escape_newlines=escape_newlines,

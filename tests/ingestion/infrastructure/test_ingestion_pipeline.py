@@ -57,22 +57,22 @@ class DummyRepository:
 
     def get_by_territory_and_date(
         self,
-        territory_id: object,
-        date: object,
-        section: object = None,
+        territory_id: TerritoryId,
+        date: GazetteDate,
+        section: str | None = None,
     ) -> GazetteEdition | None:
         return self.saved_editions[0] if self.saved_editions else None
 
-    def exists_by_hash(self, file_hash: object) -> bool:
+    def exists_by_hash(self, summary_hash: DocumentHash) -> bool:
         return False
 
-    def get_act_by_id(self, act_id: object) -> None:
+    def get_act_by_id(self, act_id: uuid.UUID) -> NormativeAct | None:
         return None
 
-    def find_acts_by_edition(self, edition_id: object) -> list[NormativeAct]:
+    def find_acts_by_edition(self, edition_id: uuid.UUID) -> list[NormativeAct]:
         return []
 
-    def exists_act_by_hash(self, content_hash: object) -> bool:
+    def exists_act_by_hash(self, content_hash: DocumentHash) -> bool:
         return False
 
 
@@ -156,10 +156,10 @@ class TestGazetteIngestionPipeline:
         assert repo.saved_editions[0].total_acts == 5
 
     def test_process_raw_normative_act_item(self) -> None:
-        """Scenario: Pipeline maps RawNormativeActPayload and saves to repository."""
+        """Scenario: Pipeline maps RawNormativeActPayload and flushes on close_spider."""
         repo = DummyRepository()
         mapper = DummyMapper()
-        pipeline = GazetteIngestionPipeline(repository=repo, mapper=mapper)
+        pipeline = GazetteIngestionPipeline(repository=repo, mapper=mapper, batch_size=50)
 
         spider = MagicMock(spec=Spider)
         spider.name = "test_spider"
@@ -189,8 +189,105 @@ class TestGazetteIngestionPipeline:
 
         result = pipeline.process_item(act_payload, spider)
         assert result == act_payload
+
+        # In micro-batch mode, item is buffered until batch_size reached or spider closed
+        pipeline.close_spider(spider)
         assert len(repo.saved_acts) == 1
         assert repo.saved_acts[0].act_type == "PORTARIA"
+
+    def test_micro_batch_buffering_and_bulk_flush(self) -> None:
+        """Scenario: Pipeline buffers acts up to batch_size and executes bulk save."""
+        repo = DummyRepository()
+        mapper = DummyMapper()
+        pipeline = GazetteIngestionPipeline(repository=repo, mapper=mapper, batch_size=3)
+
+        spider = MagicMock(spec=Spider)
+        spider.name = "test_spider"
+
+        edition_payload = RawGazettePayload(
+            territory_code="BR",
+            tier="federal",
+            source_url="https://www.in.gov.br",
+            date_obj=date(2024, 1, 2),
+            section="secao_1",
+            edition_number="1",
+        )
+        pipeline.process_item(edition_payload, spider)
+
+        for i in range(2):
+            act_payload = RawNormativeActPayload(
+                territory_code="BR",
+                source_url=f"https://www.in.gov.br/web/dou/-/portaria-{i}",
+                raw_content=f"Art. {i} Conteúdo",
+                title=f"PORTARIA Nº {i}",
+                act_type="PORTARIA",
+                date_obj=date(2024, 1, 2),
+                section="secao_1",
+                edition_number="1",
+            )
+            pipeline.process_item(act_payload, spider)
+
+        # Buffer has 2 items (< batch_size 3), so not saved yet
+        assert len(repo.saved_acts) == 0
+
+        # Add 3rd item to trigger threshold flush
+        act_payload_3 = RawNormativeActPayload(
+            territory_code="BR",
+            source_url="https://www.in.gov.br/web/dou/-/portaria-2",
+            raw_content="Art. 2 Conteúdo",
+            title="PORTARIA Nº 2",
+            act_type="PORTARIA",
+            date_obj=date(2024, 1, 2),
+            section="secao_1",
+            edition_number="1",
+        )
+        pipeline.process_item(act_payload_3, spider)
+        assert len(repo.saved_acts) == 3
+
+    def test_new_edition_flushes_pending_act_buffer(self) -> None:
+        """Scenario: Arriving edition container flushes previous acts before starting next."""
+        repo = DummyRepository()
+        mapper = DummyMapper()
+        pipeline = GazetteIngestionPipeline(repository=repo, mapper=mapper, batch_size=10)
+
+        spider = MagicMock(spec=Spider)
+        spider.name = "test_spider"
+
+        # Edition 1
+        ed1 = RawGazettePayload(
+            territory_code="BR",
+            tier="federal",
+            source_url="https://www.in.gov.br/1",
+            date_obj=date(2024, 1, 2),
+            section="secao_1",
+            edition_number="1",
+        )
+        pipeline.process_item(ed1, spider)
+
+        act1 = RawNormativeActPayload(
+            territory_code="BR",
+            source_url="https://www.in.gov.br/web/dou/-/p1",
+            raw_content="Texto 1",
+            title="P1",
+            act_type="PORTARIA",
+            date_obj=date(2024, 1, 2),
+            section="secao_1",
+            edition_number="1",
+        )
+        pipeline.process_item(act1, spider)
+        assert len(repo.saved_acts) == 0  # Buffered
+
+        # Edition 2 triggers flush of Edition 1 acts
+        ed2 = RawGazettePayload(
+            territory_code="BR",
+            tier="federal",
+            source_url="https://www.in.gov.br/2",
+            date_obj=date(2024, 1, 3),
+            section="secao_1",
+            edition_number="2",
+        )
+        pipeline.process_item(ed2, spider)
+        assert len(repo.saved_acts) == 1
 
     def test_process_non_payload_item_passthrough(self) -> None:
         """Scenario: Non-payload items pass through unchanged."""

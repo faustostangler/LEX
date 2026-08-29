@@ -13,6 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from lex.ingestion.application.ports import GazetteRepositoryPort
+from lex.ingestion.domain.entities import NormativeAct
 from lex.ingestion.domain.value_objects import GazetteDate, TerritoryId
 from lex.ingestion.infrastructure.adapters.gazette_mapper import GazetteMapper
 from lex.ingestion.infrastructure.adapters.stream_extractor import (
@@ -29,19 +30,24 @@ from lex.shared_kernel.config import LexSettings
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_PIPELINE_BATCH_SIZE: int = 50
+
 
 class GazetteIngestionPipeline:
-    """Scrapy pipeline routing RawGazettePayload and RawNormativeActPayload items to DB."""
+    """Scrapy pipeline routing payloads to DB with micro-batching (ADR-005)."""
 
     def __init__(
         self,
         repository: GazetteRepositoryPort | None = None,
         mapper: GazetteMapper | None = None,
         session: Session | None = None,
+        batch_size: int = DEFAULT_PIPELINE_BATCH_SIZE,
     ) -> None:
         self._repository = repository
         self._mapper = mapper
         self._session = session
+        self._batch_size = batch_size
+        self._act_buffer: list[NormativeAct] = []
         # Cache mapped edition UUIDs: key -> edition_id
         self._edition_id_cache: dict[tuple[str, str, str, str, bool], uuid.UUID] = {}
 
@@ -59,12 +65,26 @@ class GazetteIngestionPipeline:
 
         return cls(repository=repository, mapper=mapper, session=session)
 
+    def _flush_acts(self) -> None:
+        """Persist buffered normative acts in a single bulk transaction and clear buffer."""
+        if not self._act_buffer or self._repository is None:
+            return
+
+        try:
+            self._repository.save_normative_acts_bulk(self._act_buffer)
+        except Exception as exc:
+            logger.error(f"Error bulk persisting {len(self._act_buffer)} normative acts: {exc}")
+        finally:
+            self._act_buffer.clear()
+
     def process_item(self, item: Any, spider: Any = None) -> Any:
-        """Process yielded items through ACL mapper and domain repository."""
+        """Process yielded items through ACL mapper and domain repository with micro-batching."""
         if self._mapper is None or self._repository is None:
             return item
 
         if isinstance(item, RawGazettePayload):
+            # Flush any pending acts from a previous edition before processing new edition
+            self._flush_acts()
             try:
                 edition = self._mapper.to_domain(item)
                 saved_edition = self._repository.save(edition)
@@ -122,13 +142,16 @@ class GazetteIngestionPipeline:
 
             try:
                 act = self._mapper.to_normative_act(item, edition_id=final_edition_id)
-                self._repository.save_normative_act(act)
+                self._act_buffer.append(act)
+                if len(self._act_buffer) >= self._batch_size:
+                    self._flush_acts()
             except Exception as exc:
-                logger.error(f"Error persisting normative act {item.source_url}: {exc}")
+                logger.error(f"Error preparing normative act {item.source_url}: {exc}")
 
         return item
 
     def close_spider(self, spider: Any = None) -> None:
-        """Clean up database session upon spider termination."""
+        """Flush any pending buffered acts and clean up database session on spider shutdown."""
+        self._flush_acts()
         if self._session is not None:
             self._session.close()
