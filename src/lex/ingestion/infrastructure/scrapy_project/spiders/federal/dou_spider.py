@@ -42,10 +42,10 @@ from lex.shared_kernel.config import LexSettings
 # -----------------------------------------------------------------------------
 # Module Constants & Operational Defaults (ADR-003)
 # -----------------------------------------------------------------------------
-DEFAULT_CONCURRENT_SEMAPHORE: int = 25
+DEFAULT_CONCURRENT_SEMAPHORE: int = 50
 DEFAULT_HTTP_TIMEOUT_SECONDS: float = 20.0
-DEFAULT_MAX_CONNECTIONS: int = 50
-DEFAULT_MAX_KEEPALIVE_CONNECTIONS: int = 30
+DEFAULT_MAX_CONNECTIONS: int = 80
+DEFAULT_MAX_KEEPALIVE_CONNECTIONS: int = 50
 DEFAULT_TQDM_MIN_INTERVAL_SECONDS: float = 0.2
 
 LEITURA_JORNAL_BASE_URL: str = "https://www.in.gov.br/leiturajornal"
