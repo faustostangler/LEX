@@ -1,7 +1,8 @@
 """Anti-Corruption Layer (ACL) Mapper for Gazette and Normative Acts Ingestion.
 
 Translates untyped RawGazettePayload and RawNormativeActPayload DTOs emitted by Scrapy
-spiders into strictly validated GazetteEdition and NormativeAct domain entities.
+spiders into strictly validated GazetteEdition and NormativeAct domain entities with
+O(1) deterministic Kelsenian hierarchy classification and LexML canonical URN formatting.
 """
 
 import re
@@ -27,12 +28,366 @@ from lex.ingestion.infrastructure.dto import (
     RawGazettePayload,
     RawNormativeActPayload,
 )
+from lex.shared_kernel.value_objects import (
+    HierarchicalGroup,
+    HierarchicalRank,
+    PublicationNature,
+)
 
 # -----------------------------------------------------------------------------
 # Module Constants & Date Patterns (ADR-003)
 # -----------------------------------------------------------------------------
 ISO_DATE_PATTERN: re.Pattern[str] = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 BRAZILIAN_DATE_FORMATS: Sequence[str] = ("%d/%m/%Y", "%d-%m-%Y")
+
+# -----------------------------------------------------------------------------
+# Hierarchy Classification Rules (SPEC-003 & ADR-007)
+# Ordered by specificity: Composite prefixes MUST precede generic terms.
+# -----------------------------------------------------------------------------
+HIERARCHY_MATCHING_TABLE: list[
+    tuple[str, HierarchicalGroup, HierarchicalRank, PublicationNature]
+] = [
+    # 1. Composite & Specific Prefixes
+    (
+        "EMENDA CONSTITUCIONAL",
+        HierarchicalGroup.GRUPO_1_PRIMARIO,
+        HierarchicalRank.EMENDA_CONSTITUCIONAL,
+        PublicationNature.NORMATIVA_ABSTRATA,
+    ),
+    (
+        "LEI COMPLEMENTAR",
+        HierarchicalGroup.GRUPO_1_PRIMARIO,
+        HierarchicalRank.LEI_COMPLEMENTAR,
+        PublicationNature.NORMATIVA_ABSTRATA,
+    ),
+    (
+        "MEDIDA PROVISÓRIA",
+        HierarchicalGroup.GRUPO_1_PRIMARIO,
+        HierarchicalRank.MEDIDA_PROVISORIA,
+        PublicationNature.NORMATIVA_ABSTRATA,
+    ),
+    (
+        "MEDIDA PROVISORIA",
+        HierarchicalGroup.GRUPO_1_PRIMARIO,
+        HierarchicalRank.MEDIDA_PROVISORIA,
+        PublicationNature.NORMATIVA_ABSTRATA,
+    ),
+    (
+        "DECRETO LEGISLATIVO",
+        HierarchicalGroup.GRUPO_1_PRIMARIO,
+        HierarchicalRank.DECRETO_LEGISLATIVO,
+        PublicationNature.NORMATIVA_ABSTRATA,
+    ),
+    (
+        "LEI DELEGADA",
+        HierarchicalGroup.GRUPO_1_PRIMARIO,
+        HierarchicalRank.LEI_DELEGADA,
+        PublicationNature.NORMATIVA_ABSTRATA,
+    ),
+    (
+        "INSTRUÇÃO NORMATIVA",
+        HierarchicalGroup.GRUPO_3_COLEGIADO_REGULATORIO,
+        HierarchicalRank.INSTRUCAO_NORMATIVA,
+        PublicationNature.REGULATORIA_SETORIAL,
+    ),
+    (
+        "INSTRUCAO NORMATIVA",
+        HierarchicalGroup.GRUPO_3_COLEGIADO_REGULATORIO,
+        HierarchicalRank.INSTRUCAO_NORMATIVA,
+        PublicationNature.REGULATORIA_SETORIAL,
+    ),
+    (
+        "ATO DECLARATÓRIO",
+        HierarchicalGroup.GRUPO_4_ORDINATORIO_MINISTERIAL,
+        HierarchicalRank.PORTARIA_NORMATIVA,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "ATO DECLARATORIO",
+        HierarchicalGroup.GRUPO_4_ORDINATORIO_MINISTERIAL,
+        HierarchicalRank.PORTARIA_NORMATIVA,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "ATO CONVOCATÓRIO",
+        HierarchicalGroup.GRUPO_6_EDITALICIO,
+        HierarchicalRank.PUBLICIDADE_OPERACIONAL,
+        PublicationNature.PUBLICIDADE_OPERACIONAL,
+    ),
+    (
+        "ATO CONVOCATORIO",
+        HierarchicalGroup.GRUPO_6_EDITALICIO,
+        HierarchicalRank.PUBLICIDADE_OPERACIONAL,
+        PublicationNature.PUBLICIDADE_OPERACIONAL,
+    ),
+    (
+        "SOLUÇÃO DE CONSULTA",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "SOLUCAO DE CONSULTA",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    # 2. Extratos, Avisos e Publicidade (Must precede CONTRATO/CONVÊNIO)
+    (
+        "EXTRATO",
+        HierarchicalGroup.GRUPO_8_PUBLICIDADE_EXTRATOS,
+        HierarchicalRank.PUBLICIDADE_OPERACIONAL,
+        PublicationNature.PUBLICIDADE_OPERACIONAL,
+    ),
+    (
+        "AVISO",
+        HierarchicalGroup.GRUPO_8_PUBLICIDADE_EXTRATOS,
+        HierarchicalRank.PUBLICIDADE_OPERACIONAL,
+        PublicationNature.PUBLICIDADE_OPERACIONAL,
+    ),
+    (
+        "RESULTADO",
+        HierarchicalGroup.GRUPO_8_PUBLICIDADE_EXTRATOS,
+        HierarchicalRank.PUBLICIDADE_OPERACIONAL,
+        PublicationNature.PUBLICIDADE_OPERACIONAL,
+    ),
+    (
+        "RETIFICAÇÃO",
+        HierarchicalGroup.GRUPO_8_PUBLICIDADE_EXTRATOS,
+        HierarchicalRank.PUBLICIDADE_OPERACIONAL,
+        PublicationNature.PUBLICIDADE_OPERACIONAL,
+    ),
+    (
+        "RETIFICACAO",
+        HierarchicalGroup.GRUPO_8_PUBLICIDADE_EXTRATOS,
+        HierarchicalRank.PUBLICIDADE_OPERACIONAL,
+        PublicationNature.PUBLICIDADE_OPERACIONAL,
+    ),
+    (
+        "EDITAL",
+        HierarchicalGroup.GRUPO_6_EDITALICIO,
+        HierarchicalRank.PUBLICIDADE_OPERACIONAL,
+        PublicationNature.PUBLICIDADE_OPERACIONAL,
+    ),
+    (
+        "PAUTA",
+        HierarchicalGroup.GRUPO_8_PUBLICIDADE_EXTRATOS,
+        HierarchicalRank.PUBLICIDADE_OPERACIONAL,
+        PublicationNature.PUBLICIDADE_OPERACIONAL,
+    ),
+    (
+        "COMUNICADO",
+        HierarchicalGroup.GRUPO_8_PUBLICIDADE_EXTRATOS,
+        HierarchicalRank.PUBLICIDADE_OPERACIONAL,
+        PublicationNature.PUBLICIDADE_OPERACIONAL,
+    ),
+    (
+        "SÚMULA",
+        HierarchicalGroup.GRUPO_8_PUBLICIDADE_EXTRATOS,
+        HierarchicalRank.PUBLICIDADE_OPERACIONAL,
+        PublicationNature.PUBLICIDADE_OPERACIONAL,
+    ),
+    (
+        "SUMULA",
+        HierarchicalGroup.GRUPO_8_PUBLICIDADE_EXTRATOS,
+        HierarchicalRank.PUBLICIDADE_OPERACIONAL,
+        PublicationNature.PUBLICIDADE_OPERACIONAL,
+    ),
+    # 3. Generic Typologies
+    (
+        "LEI",
+        HierarchicalGroup.GRUPO_1_PRIMARIO,
+        HierarchicalRank.LEI_ORDINARIA,
+        PublicationNature.NORMATIVA_ABSTRATA,
+    ),
+    (
+        "DECRETO",
+        HierarchicalGroup.GRUPO_2_EXECUTIVO,
+        HierarchicalRank.DECRETO_EXECUTIVO,
+        PublicationNature.NORMATIVA_ABSTRATA,
+    ),
+    (
+        "RESOLUÇÃO",
+        HierarchicalGroup.GRUPO_3_COLEGIADO_REGULATORIO,
+        HierarchicalRank.RESOLUCAO_REGULATORIA,
+        PublicationNature.REGULATORIA_SETORIAL,
+    ),
+    (
+        "RESOLUCAO",
+        HierarchicalGroup.GRUPO_3_COLEGIADO_REGULATORIO,
+        HierarchicalRank.RESOLUCAO_REGULATORIA,
+        PublicationNature.REGULATORIA_SETORIAL,
+    ),
+    (
+        "DELIBERAÇÃO",
+        HierarchicalGroup.GRUPO_3_COLEGIADO_REGULATORIO,
+        HierarchicalRank.RESOLUCAO_REGULATORIA,
+        PublicationNature.REGULATORIA_SETORIAL,
+    ),
+    (
+        "DELIBERACAO",
+        HierarchicalGroup.GRUPO_3_COLEGIADO_REGULATORIO,
+        HierarchicalRank.RESOLUCAO_REGULATORIA,
+        PublicationNature.REGULATORIA_SETORIAL,
+    ),
+    (
+        "PORTARIA",
+        HierarchicalGroup.GRUPO_4_ORDINATORIO_MINISTERIAL,
+        HierarchicalRank.PORTARIA_NORMATIVA,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "DESPACHO",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "DECISÃO",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "DECISAO",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "ACÓRDÃO",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "ACORDAO",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "ALVARÁ",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "ALVARA",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "AUTORIZAÇÃO",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "AUTORIZACAO",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "LICENÇA",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "LICENCA",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "CONTRATO",
+        HierarchicalGroup.GRUPO_7_CONTRATUAL,
+        HierarchicalRank.PUBLICIDADE_OPERACIONAL,
+        PublicationNature.PUBLICIDADE_OPERACIONAL,
+    ),
+    (
+        "CONVÊNIO",
+        HierarchicalGroup.GRUPO_7_CONTRATUAL,
+        HierarchicalRank.PUBLICIDADE_OPERACIONAL,
+        PublicationNature.PUBLICIDADE_OPERACIONAL,
+    ),
+    (
+        "CONVENIO",
+        HierarchicalGroup.GRUPO_7_CONTRATUAL,
+        HierarchicalRank.PUBLICIDADE_OPERACIONAL,
+        PublicationNature.PUBLICIDADE_OPERACIONAL,
+    ),
+    (
+        "TERMO",
+        HierarchicalGroup.GRUPO_7_CONTRATUAL,
+        HierarchicalRank.PUBLICIDADE_OPERACIONAL,
+        PublicationNature.PUBLICIDADE_OPERACIONAL,
+    ),
+    (
+        "ACORDO",
+        HierarchicalGroup.GRUPO_7_CONTRATUAL,
+        HierarchicalRank.PUBLICIDADE_OPERACIONAL,
+        PublicationNature.PUBLICIDADE_OPERACIONAL,
+    ),
+    (
+        "ATA",
+        HierarchicalGroup.GRUPO_6_EDITALICIO,
+        HierarchicalRank.PUBLICIDADE_OPERACIONAL,
+        PublicationNature.PUBLICIDADE_OPERACIONAL,
+    ),
+    (
+        "ATO",
+        HierarchicalGroup.GRUPO_4_ORDINATORIO_MINISTERIAL,
+        HierarchicalRank.PORTARIA_NORMATIVA,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+]
+
+
+def resolve_hierarchy(
+    act_type: str, section: str | None = None
+) -> tuple[HierarchicalGroup, int, PublicationNature]:
+    """Deterministically classify an act based on act_type and official gazette section."""
+    clean_type = act_type.strip().upper()
+
+    for prefix, group, rank, nature in HIERARCHY_MATCHING_TABLE:
+        if clean_type.startswith(prefix):
+            # Portaria published in Section 1 is normative regulation (Trilha A)
+            if prefix == "PORTARIA" and section == "secao_1":
+                return (group, int(rank), PublicationNature.NORMATIVA_ABSTRATA)
+            return (group, int(rank), nature)
+
+    # Fallback to Group 8
+    return (
+        HierarchicalGroup.GRUPO_8_PUBLICIDADE_EXTRATOS,
+        int(HierarchicalRank.PUBLICIDADE_OPERACIONAL),
+        PublicationNature.PUBLICIDADE_OPERACIONAL,
+    )
+
+
+def generate_canonical_urn(
+    territory_code: str,
+    act_type: str,
+    act_number: str | None,
+    act_year: int | None,
+    act_date: date,
+    content_hash: str | None = None,
+) -> str:
+    """Generate a standardized LexML/FRBR Canonical URN for a normative act."""
+    clean_territory = territory_code.strip().lower()
+    clean_type = re.sub(r"[^a-zA-Z0-9]+", ".", act_type.strip().lower())[:80].strip(".")
+    if not clean_type:
+        clean_type = "ato"
+
+    if act_number and act_year and act_number.strip() and act_year > 1800:
+        clean_num = re.sub(r"[^a-zA-Z0-9.\-]+", "", act_number.strip())[:50]
+        return f"urn:lex:{clean_territory}:federal:{clean_type}:{act_year};{clean_num}"
+
+    fallback_id = content_hash[:16] if content_hash else str(uuid.uuid4())[:8]
+    return f"urn:lex:{clean_territory}:federal:{clean_type}:{act_date.isoformat()};{fallback_id}"
 
 
 class GazetteMapper:
@@ -85,7 +440,18 @@ class GazetteMapper:
         territory_id = TerritoryId.from_code(payload.territory_code)
         gazette_date = GazetteDate.from_date(payload.date_obj)
 
+        group, rank, nature = resolve_hierarchy(payload.act_type, payload.section)
+        canonical_urn = generate_canonical_urn(
+            territory_code=payload.territory_code,
+            act_type=payload.act_type,
+            act_number=payload.act_number,
+            act_year=payload.act_year,
+            act_date=payload.date_obj,
+            content_hash=content_hash.hex_digest,
+        )
+
         return NormativeAct(
+            id=None,
             edition_id=edition_id,
             territory_id=territory_id,
             date=gazette_date,
@@ -104,8 +470,14 @@ class GazetteMapper:
             content_hash=content_hash,
             char_count=char_count,
             raw_content=raw_text,
+            structured_content=None,
             classification_source=ClassificationSource(payload.classification_source),
             classification_confidence=payload.classification_confidence,
+            hierarchical_group=group,
+            hierarchical_rank=rank,
+            publication_nature=nature,
+            canonical_urn=canonical_urn,
+            is_stub=False,
             metadata_json=payload.metadata_json,
             scraped_at=payload.scraped_at or datetime.now(UTC),
         )

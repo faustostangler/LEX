@@ -1,6 +1,6 @@
 """Precision Unit Tests for CLI Entrypoint.
 
-Verifies default 'crawl' action, spider routing, --force flag, and argument pre-processing.
+Verifies default 'crawl' action, spider routing, --force flag, date options, and argument parsing.
 """
 
 from unittest.mock import patch
@@ -17,13 +17,16 @@ def test_build_parser_structure() -> None:
     args = parser.parse_args(["crawl"])
     assert args.command == "crawl"
     assert args.spider == "federal_dou"
+    assert args.date is None
     assert args.start_date is None
     assert args.end_date is None
+    assert args.ascending is False
     assert args.force is False
 
-    # Test crawl subcommand with force
-    args_forced = parser.parse_args(["crawl", "--force"])
+    # Test crawl subcommand with force and ascending
+    args_forced = parser.parse_args(["crawl", "--force", "--ascending"])
     assert args_forced.force is True
+    assert args_forced.ascending is True
 
     # Test init-db subcommand
     args_db = parser.parse_args(["init-db"])
@@ -52,24 +55,59 @@ def test_parse_cli_args_shorthand_routing() -> None:
 
 
 def test_cli_no_args_defaults_to_crawl_federal_dou() -> None:
-    """Scenario: Invoking CLI with no arguments defaults to crawling federal_dou for today."""
+    """Scenario: Invoking CLI with no arguments defaults to crawling federal_dou descending."""
     with patch("lex.cli.run_crawler") as mock_run_crawler:
         main([])
-        mock_run_crawler.assert_called_once_with("federal_dou", None, None, force=False)
+        mock_run_crawler.assert_called_once_with(
+            spider_name="federal_dou",
+            start_date=None,
+            end_date=None,
+            single_date=None,
+            force=False,
+            reverse=True,
+        )
 
 
 def test_cli_spider_name_shorthand_defaults_to_crawl() -> None:
     """Scenario: Running 'lex state_sp' automatically routes to crawl state_sp."""
     with patch("lex.cli.run_crawler") as mock_run_crawler:
         main(["state_sp", "--start-date", "2024-05-10"])
-        mock_run_crawler.assert_called_once_with("state_sp", "2024-05-10", None, force=False)
+        mock_run_crawler.assert_called_once_with(
+            spider_name="state_sp",
+            start_date="2024-05-10",
+            end_date=None,
+            single_date=None,
+            force=False,
+            reverse=True,
+        )
 
 
 def test_cli_flag_only_defaults_to_crawl_federal_dou() -> None:
     """Scenario: Running 'lex --start-date 2024-01-02' defaults spider to federal_dou."""
     with patch("lex.cli.run_crawler") as mock_run_crawler:
         main(["--start-date", "2024-01-02", "--force"])
-        mock_run_crawler.assert_called_once_with("federal_dou", "2024-01-02", None, force=True)
+        mock_run_crawler.assert_called_once_with(
+            spider_name="federal_dou",
+            start_date="2024-01-02",
+            end_date=None,
+            single_date=None,
+            force=True,
+            reverse=True,
+        )
+
+
+def test_cli_single_date_shorthand() -> None:
+    """Scenario: Running 'lex --date 2024-01-15' targets single date."""
+    with patch("lex.cli.run_crawler") as mock_run_crawler:
+        main(["--date", "2024-01-15"])
+        mock_run_crawler.assert_called_once_with(
+            spider_name="federal_dou",
+            start_date=None,
+            end_date=None,
+            single_date="2024-01-15",
+            force=False,
+            reverse=True,
+        )
 
 
 def test_cli_init_db_routing() -> None:

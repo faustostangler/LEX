@@ -25,6 +25,10 @@ from lex.ingestion.infrastructure.persistence.models import (
     GazetteEditionModel,
     NormativeActModel,
 )
+from lex.shared_kernel.value_objects import (
+    HierarchicalGroup,
+    PublicationNature,
+)
 
 
 class PostgresGazetteRepository(GazetteRepositoryPort):
@@ -144,10 +148,10 @@ class PostgresGazetteRepository(GazetteRepositoryPort):
             scraped_at=model.scraped_at,
         )
 
-    def exists_by_hash(self, file_hash: DocumentHash) -> bool:
+    def exists_by_hash(self, summary_hash: DocumentHash) -> bool:
         """Check if an edition container already exists matching summary_hash."""
         stmt = select(GazetteEditionModel.id).where(
-            GazetteEditionModel.summary_sha256 == file_hash.hex_digest
+            GazetteEditionModel.summary_sha256 == summary_hash.hex_digest
         )
         result = self._session.execute(stmt).first()
         return result is not None
@@ -190,6 +194,11 @@ class PostgresGazetteRepository(GazetteRepositoryPort):
                         structured_content=act.structured_content,
                         classification_source=act.classification_source.value,
                         classification_confidence=act.classification_confidence,
+                        hierarchical_group=int(act.hierarchical_group),
+                        hierarchical_rank=act.hierarchical_rank,
+                        publication_nature=act.publication_nature.value,
+                        canonical_urn=act.canonical_urn,
+                        is_stub=act.is_stub,
                         metadata_json=act.metadata_json,
                         scraped_at=act.scraped_at,
                     )
@@ -203,6 +212,11 @@ class PostgresGazetteRepository(GazetteRepositoryPort):
                             "authority_role": stmt.excluded.authority_role,
                             "raw_content": stmt.excluded.raw_content,
                             "char_count": stmt.excluded.char_count,
+                            "hierarchical_group": stmt.excluded.hierarchical_group,
+                            "hierarchical_rank": stmt.excluded.hierarchical_rank,
+                            "publication_nature": stmt.excluded.publication_nature,
+                            "canonical_urn": stmt.excluded.canonical_urn,
+                            "is_stub": stmt.excluded.is_stub,
                             "updated_at": datetime.now(UTC),
                         },
                     )
@@ -225,6 +239,11 @@ class PostgresGazetteRepository(GazetteRepositoryPort):
                         existing.authority_role = act.authority_role
                         existing.raw_content = act.raw_content
                         existing.char_count = act.char_count
+                        existing.hierarchical_group = int(act.hierarchical_group)
+                        existing.hierarchical_rank = act.hierarchical_rank
+                        existing.publication_nature = act.publication_nature.value
+                        existing.canonical_urn = act.canonical_urn
+                        existing.is_stub = act.is_stub
                         existing.updated_at = datetime.now(UTC)
                     else:
                         model = NormativeActModel(
@@ -250,6 +269,11 @@ class PostgresGazetteRepository(GazetteRepositoryPort):
                             structured_content=act.structured_content,
                             classification_source=act.classification_source.value,
                             classification_confidence=act.classification_confidence,
+                            hierarchical_group=int(act.hierarchical_group),
+                            hierarchical_rank=act.hierarchical_rank,
+                            publication_nature=act.publication_nature.value,
+                            canonical_urn=act.canonical_urn,
+                            is_stub=act.is_stub,
                             metadata_json=act.metadata_json,
                             scraped_at=act.scraped_at,
                         )
@@ -312,6 +336,11 @@ class PostgresGazetteRepository(GazetteRepositoryPort):
             structured_content=model.structured_content,
             classification_source=ClassificationSource(model.classification_source),
             classification_confidence=model.classification_confidence,
+            hierarchical_group=HierarchicalGroup(model.hierarchical_group),
+            hierarchical_rank=model.hierarchical_rank,
+            publication_nature=PublicationNature(model.publication_nature),
+            canonical_urn=model.canonical_urn,
+            is_stub=model.is_stub,
             metadata_json=model.metadata_json,
             scraped_at=model.scraped_at,
         )

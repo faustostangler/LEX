@@ -1,7 +1,7 @@
 """Precision Unit & Integration Tests for PostgresGazetteRepository.
 
 Verifies persistence, retrieval, and idempotent deduplication of GazetteEditions and NormativeActs
-specified in ADR-002.
+specified in ADR-002, ADR-006, and ADR-007.
 """
 
 import uuid
@@ -24,6 +24,11 @@ from lex.ingestion.domain.value_objects import (
 from lex.ingestion.infrastructure.persistence.models import Base
 from lex.ingestion.infrastructure.persistence.postgres_repository import (
     PostgresGazetteRepository,
+)
+from lex.shared_kernel.value_objects import (
+    HierarchicalGroup,
+    HierarchicalRank,
+    PublicationNature,
 )
 
 
@@ -71,6 +76,10 @@ def make_test_act(
     title: str = "PORTARIA Nº 1, DE 15 DE JANEIRO DE 2024",
     act_type: str = "PORTARIA",
     act_number: str = "1",
+    hierarchical_group: HierarchicalGroup = HierarchicalGroup.GRUPO_4_ORDINATORIO_MINISTERIAL,
+    hierarchical_rank: int = int(HierarchicalRank.PORTARIA_NORMATIVA),
+    publication_nature: PublicationNature = PublicationNature.NORMATIVA_ABSTRATA,
+    canonical_urn: str = "urn:lex:br:federal:portaria:2024;1",
 ) -> NormativeAct:
     """Helper to instantiate test normative act entities."""
     raw = "Art. 1º Fica instituído o comitê executivo."
@@ -93,6 +102,11 @@ def make_test_act(
         raw_content=raw,
         classification_source=ClassificationSource.PRE_SEGMENTED_SOURCE,
         classification_confidence=1.0,
+        hierarchical_group=hierarchical_group,
+        hierarchical_rank=hierarchical_rank,
+        publication_nature=publication_nature,
+        canonical_urn=canonical_urn,
+        is_stub=False,
         scraped_at=datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC),
     )
 
@@ -120,7 +134,7 @@ class TestPostgresGazetteRepository:
         assert retrieved.total_acts == 25
 
     def test_save_and_retrieve_normative_acts(self, db_session: Session) -> None:
-        """Scenario: Persist discrete normative acts linked to an edition."""
+        """Scenario: Persist discrete normative acts with hierarchical data and URNs."""
         repo = PostgresGazetteRepository(session=db_session)
         edition = make_test_edition()
         repo.save(edition)
@@ -130,12 +144,20 @@ class TestPostgresGazetteRepository:
             title="PORTARIA Nº 1",
             act_type="PORTARIA",
             act_number="1",
+            hierarchical_group=HierarchicalGroup.GRUPO_4_ORDINATORIO_MINISTERIAL,
+            hierarchical_rank=40,
+            publication_nature=PublicationNature.NORMATIVA_ABSTRATA,
+            canonical_urn="urn:lex:br:federal:portaria:2024;1",
         )
         act2 = make_test_act(
             edition_id=edition.id,  # type: ignore[arg-type]
             title="DECRETO Nº 2",
             act_type="DECRETO",
             act_number="2",
+            hierarchical_group=HierarchicalGroup.GRUPO_2_EXECUTIVO,
+            hierarchical_rank=60,
+            publication_nature=PublicationNature.NORMATIVA_ABSTRATA,
+            canonical_urn="urn:lex:br:federal:decreto:2024;2",
         )
 
         repo.save_normative_acts_bulk([act1, act2])
@@ -148,6 +170,11 @@ class TestPostgresGazetteRepository:
         assert retrieved_act is not None
         assert retrieved_act.title == "PORTARIA Nº 1"
         assert retrieved_act.authority_name == "MINISTRO DE ESTADO"
+        assert retrieved_act.hierarchical_group == HierarchicalGroup.GRUPO_4_ORDINATORIO_MINISTERIAL
+        assert retrieved_act.hierarchical_rank == 40
+        assert retrieved_act.publication_nature == PublicationNature.NORMATIVA_ABSTRATA
+        assert retrieved_act.canonical_urn == "urn:lex:br:federal:portaria:2024;1"
+        assert retrieved_act.is_stub is False
 
     def test_exists_by_hash_true_and_false(self, db_session: Session) -> None:
         """Scenario: Check hash existence in repository."""

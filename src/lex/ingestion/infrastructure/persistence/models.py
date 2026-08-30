@@ -17,6 +17,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -134,6 +135,13 @@ class NormativeActModel(Base):
         String(30), default="pre_segmented_source", nullable=False
     )
     classification_confidence: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    hierarchical_group: Mapped[int] = mapped_column(SmallInteger, default=8, nullable=False)
+    hierarchical_rank: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    publication_nature: Mapped[str] = mapped_column(
+        String(30), default="publicidade_operacional", nullable=False
+    )
+    canonical_urn: Mapped[str | None] = mapped_column(String(350), nullable=True, index=True)
+    is_stub: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     metadata_json: Mapped[dict[str, Any] | None] = mapped_column(
         JSON().with_variant(JSONB, "postgresql"),
         nullable=True,
@@ -168,6 +176,9 @@ class NormativeActModel(Base):
         ),
         Index("ix_normative_acts_date_type", "date", "act_type"),
         Index("ix_normative_acts_territory_date", "territory_id", "date"),
+        Index("ix_normative_acts_hierarchy", "hierarchical_group", text("date DESC")),
+        Index("ix_normative_acts_nature", "publication_nature"),
+        Index("ix_normative_acts_urn", "canonical_urn"),
         Index("ix_normative_acts_hierarchy_gin", "hierarchy", postgresql_using="gin"),
         Index(
             "ix_normative_acts_metadata_gin",

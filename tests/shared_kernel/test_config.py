@@ -19,10 +19,13 @@ class TestLexSettings:
         monkeypatch.setenv("LEX_MAX_MEMORY_SPOOL_MB", "25")
         monkeypatch.setenv("LEX_LOG_LEVEL", "DEBUG")
 
+        monkeypatch.setenv("LEX_LOG_FILE", "logs/custom.log")
+
         settings = LexSettings()
         assert str(settings.database_url).startswith("postgresql://")
         assert settings.max_memory_spool_mb == 25
         assert settings.log_level == "DEBUG"
+        assert settings.log_file == "logs/custom.log"
         assert settings.autothrottle_enabled is True
 
     def test_missing_mandatory_database_url_raises_validation_error(

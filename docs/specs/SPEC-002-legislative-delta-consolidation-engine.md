@@ -1,4 +1,4 @@
-# SPEC-002: Legislative Delta Extraction, Mutation Ledger, and AST Compilation Specification
+# SPEC-002: Legislative Delta Extraction, Out-of-Order Ingestion, Mutation Ledger, and AST Compilation Specification
 
 **Linked ADR:** [ADR-006](../adr/ADR-006-legislative-delta-mutation-ledger-and-compiled-ast-consolidation-engine.md)  
 **Status:** APPROVED  
@@ -9,7 +9,7 @@
 
 ## 1. Overview & Objectives
 
-This specification establishes the precision contracts, domain invariants, parsing grammars, deterministic state machine transitions, and test boundaries for the **LEX Legislative Consolidation Engine**. It operationalizes the decisions codified in [ADR-006](../adr/ADR-006-legislative-delta-mutation-ledger-and-compiled-ast-consolidation-engine.md) into concrete, testable specifications for TDD implementation.
+This specification establishes the precision contracts, domain invariants, parsing grammars, out-of-order ingestion state machine transitions, event-driven catch-up mechanics, and test boundaries for the **LEX Legislative Consolidation Engine**. It operationalizes the architectural decisions codified in [ADR-006](../adr/ADR-006-legislative-delta-mutation-ledger-and-compiled-ast-consolidation-engine.md).
 
 ---
 
@@ -17,18 +17,20 @@ This specification establishes the precision contracts, domain invariants, parsi
 
 ### 2.1 Value Objects & Type Definitions
 
+* **`CanonicalUrn`**:
+  * **Rule:** A strict LexML/FRBR-compliant uniform resource name:
+    `^urn:lex:br:(federal|[a-z]{2}):(lei|lei\.complementar|decreto|decreto\.lei|medida\.provisoria|portaria|resolucao):([0-9]{4}(?:-[0-9]{2}-[0-9]{2})?);([0-9a-z\.\-]+)$`
+  * **Examples:** `urn:lex:br:federal:lei:1993-06-21;8666`, `urn:lex:br:federal:decreto.lei:1940;2848`, `urn:lex:br:sp:lei:2015;15854`.
+  * **Exception:** `InvalidCanonicalUrnError`
+
 * **`CanonicalNodePath`**:
-  * **Rule:** A dot-separated hierarchical string identifier adhering strictly to Brazilian legislative structure:
+  * **Rule:** Dot-separated hierarchical provision address:
     `^(art_[0-9]+[a-z]?)(?:\.(par_[0-9]+[a-z]?|par_unico))?(?:\.(inc_[0-9]+[a-z]?))?(?:\.(ali_[a-z]+))?(?:\.(item_[0-9]+))?$`
-  * **Valid Examples:** `art_3`, `art_15_a`, `art_3.par_2`, `art_3.par_unico`, `art_3.par_1.inc_14`, `art_3.inc_2.ali_a.item_1`.
-  * **Invariants:**
-    1. Must be lowercase.
-    2. Must begin with an article prefix (`art_`).
-    3. Hierarchy levels cannot be skipped (e.g., `art_3.ali_a` without an intervening `inc_` is rejected unless specified in an atypical historical decree).
+  * **Examples:** `art_3`, `art_15_a`, `art_3.par_2`, `art_3.par_unico`, `art_3.par_1.inc_14`, `art_3.inc_2.ali_a.item_1`.
   * **Exception:** `InvalidCanonicalNodePathError`
 
 * **`MutationType`**:
-  * **Rule:** Strict `StrEnum` covering all normative amendment modalities:
+  * **Rule:** Strict `StrEnum` covering all amendment modalities:
     ```python
     class MutationType(StrEnum):
         ACRESCIMO = "ACRESCIMO"
@@ -41,82 +43,80 @@ This specification establishes the precision contracts, domain invariants, parsi
     ```
 
 * **`DispositivoStatus`**:
-  * **Rule:** Strict `StrEnum` indicating the operational legal state of a provision node:
+  * **Rule:** Strict `StrEnum` indicating operational legal state:
     ```python
     class DispositivoStatus(StrEnum):
-        ORIGINAL_ACTIVE = "original_active"  # Unaltered since base publication
-        MODIFIED_ACTIVE = "modified_active"  # Text altered by a subsequent act
-        REVOKED = "revoked"  # Revoked / lost efficacy (rendered with <strike>)
-        SUSPENDED = "suspended"  # Efficacy suspended (e.g. STF ADI / Senate Res)
+        ORIGINAL_ACTIVE = "original_active"  # Unaltered since base enactment
+        MODIFIED_ACTIVE = "modified_active"  # Altered by subsequent act
+        REVOKED = "revoked"  # Revoked (rendered with <strike>)
+        SUSPENDED = "suspended"  # Efficacy suspended (e.g. STF ADI)
     ```
 
 ---
 
-### 2.2 Domain Entities & Aggregate Roots
+### 2.2 Domain Entities, Aggregate Roots & Domain Events
+
+#### `NormativeAct` (Aggregate Root Enhancements)
+* **New Fields:**
+  * `canonical_urn`: `CanonicalUrn`
+  * `is_stub`: `bool` (Default: `False`. Set to `True` when created as a placeholder for an out-of-order referenced base act).
+* **Invariants for Stub Entities:**
+  1. If `is_stub == True`, `raw_content` may be `None` and `char_count` may be `0`.
+  2. If `is_stub == False`, `raw_content` must be a non-empty string and `char_count == len(raw_content.strip())`.
 
 #### `NormativeActMutation` (Write Model Entity)
 * **Fields:**
   * `id`: `UUID`
-  * `target_act_id`: `UUID` (Target Statute ID)
-  * `target_node_path`: `CanonicalNodePath` (Target provision, e.g. `art_3.inc_1`)
-  * `author_act_id`: `UUID` (Amending Statute ID)
-  * `author_dispositivo_ref`: `str` (e.g., `"Art. 189, inciso I"`)
+  * `target_act_id`: `UUID` (Foreign key to target `NormativeAct`, even if it is a Stub)
+  * `target_node_path`: `CanonicalNodePath`
+  * `author_act_id`: `UUID`
+  * `author_dispositivo_ref`: `str`
   * `mutation_type`: `MutationType`
   * `new_text`: `str | None`
   * `new_structured_payload`: `dict[str, Any] | None`
   * `publication_date`: `GazetteDate`
   * `effective_date`: `GazetteDate`
   * `mutation_sha256`: `DocumentHash`
-* **Invariants:**
-  1. If `mutation_type in (ACRESCIMO, ALTERACAO_NR, RETIFICACAO)`, `new_text` must be a non-empty string.
-  2. If `mutation_type in (REVOGACAO_EXPRESSA, REVOGACAO_TACITA, SUSPENSAO_EFICACIA)`, `new_text` is allowed to be `None`.
-  3. `effective_date` must not precede `publication_date` by more than zero days unless an explicit retroactivity clause is validated.
 
-#### `CompiledNormativeAct` (Read Model Aggregate Root)
+#### `LegislationBackfillTask` (JIT Queue Entity)
 * **Fields:**
-  * `act_id`: `UUID` (Primary Key)
-  * `compiled_version_hash`: `DocumentHash`
-  * `total_mutations_applied`: `int`
-  * `last_mutation_effective_date`: `date | None`
-  * `compiled_ast`: `dict[str, Any]` (Serialized `NormativeActAST`)
-  * `compiled_html`: `str` (LZ4 TOAST compressed HTML document)
-  * `compiled_markdown`: `str` (LZ4 TOAST compressed Markdown document)
-  * `active_articles_count`: `int`
-  * `revoked_articles_count`: `int`
-  * `last_compiled_at`: `datetime`
+  * `id`: `UUID`
+  * `canonical_urn`: `CanonicalUrn`
+  * `territory_id`: `TerritoryId`
+  * `act_type`: `ActType`
+  * `act_number`: `str`
+  * `act_year`: `int`
+  * `citation_count`: `int` (Priority weight: increments on each incoming mutation referencing this missing act)
+  * `status`: `str` (`"PENDING"`, `"IN_PROGRESS"`, `"RESOLVED"`)
+
+#### Domain Events
+* **`NormativeActHydrated`**:
+  * **Payload:** `act_id: UUID`, `canonical_urn: CanonicalUrn`, `hydrated_at: datetime`.
+  * **Handler:** Automatically invokes `CompiledActReducer.recompile(act_id)` to process all accumulated mutations for this statute.
 
 ---
 
 ## 3. Parsing Specification (LC 95/1998 Regex AST Grammar)
 
-The deterministic mutation extractor detects amendment directives in legislative texts using canonical syntactic patterns:
-
-### 3.1 Amending Article Header Regexes
 ```python
-# Matches: "Art. 1º A Lei nº 14.133, de 1º de abril de 2021, passa a vigorar com as seguintes alterações:"
+# 1. Matches: "Art. 1º A Lei nº 14.133, de 1º de abril de 2021, passa a vigorar com as seguintes alterações:"
 RE_ALTERATION_HEADER = re.compile(
     r"[Aa]rt\.\s*\d+[ºo]?\s+(?:O|A|Os|As)?\s*(Lei|Decreto|Medida\s+Provisória|Portaria|Resolução)"
     r"(?:\s+Complementar)?\s+(?:n[ºo°\.]?\s*)?([\d\.]+)(?:,\s+de\s+[\w\s]+de\s+\d{4})?"
     r",?\s+passa[m]?\s+a\s+vigorar\s+com\s+a[s]?\s+seguinte[s]?\s+alteraç[ãõ]e[s]?:?",
     re.IGNORECASE,
 )
-```
 
-### 3.2 Provision Identification & `(NR)` Marker Regexes
-```python
-# Identifies provision label: "Art. 3º", "§ 1º", "Parágrafo único.", "XIV -", "a)", "1."
+# 2. Identifies provision labels: "Art. 3º", "§ 1º", "Parágrafo único.", "XIV -", "a)", "1."
 RE_PROVISION_LABEL = re.compile(
     r"^(?:(Art\.\s*\d+[ºo\-]?[A-Za-z]?)|(§\s*\d+[ºo]?|Parágrafo\s+único)|([IVXLCDM]+\s*[-–])|([a-z]\s*[\)\-])|(\d+\s*[\.\-]))\s*(.*)$",
     re.MULTILINE,
 )
 
-# Identifies (NR) marker at the end of altered provisions
+# 3. Identifies (NR) marker at the end of altered provisions
 RE_NR_MARKER = re.compile(r"\s*\((?:NR|nr)\)\s*$", re.MULTILINE)
-```
 
-### 3.3 Express Revocation Regexes
-```python
-# Matches: "Revogam-se os incisos I e II do caput do art. 3º da Lei nº 10.000..."
+# 4. Matches express revocations: "Revogam-se os incisos I e II do caput do art. 3º da Lei nº 10.000..."
 RE_EXPRESS_REVOCATION = re.compile(
     r"[Rr]evoga[m]?\s*-\s*se\s+(?:expressamente\s+)?"
     r"(?:o|a|os|as|o[s]?\s+seguinte[s]?\s+dispositivo[s]?:\s*)?"
@@ -128,110 +128,97 @@ RE_EXPRESS_REVOCATION = re.compile(
 
 ---
 
-## 4. Pure Functional Reducer Specification
+## 4. Out-of-Order State Machine & Reducer Specification
 
 $$\operatorname{reduce}(\text{BaseAST}, [\text{Mutation}_1, \dots, \text{Mutation}_k]) \longrightarrow \text{CompiledAST}$$
 
 ```
-                MUTATION STATE MACHINE TRANSITION RULES
- ┌──────────────────┐               ALTERACAO_NR              ┌──────────────────┐
- │ ORIGINAL_ACTIVE  │ ──────────────────────────────────────> │ MODIFIED_ACTIVE  │
- └──────────────────┘                                         └──────────────────┘
-          │                                                            │
-          │ REVOGACAO_EXPRESSA                                         │ REVOGACAO_EXPRESSA
-          ▼                                                            ▼
- ┌──────────────────┐               ALTERACAO_NR              ┌──────────────────┐
- │     REVOKED      │ <────────────────────────────────────── │     REVOKED      │
- └──────────────────┘                                         └──────────────────┘
+                   OUT-OF-ORDER INGESTION & REDUCTION FLOW
+                   
+       [ Spider Ingests Amending Act ]
+                     │
+                     ▼
+          [ Extract Mutations ]
+                     │
+                     ▼
+        [ Check Target Statute in DB ]
+         /                          \
+        ▼ (Target Missing)           ▼ (Target Exists)
+  [ Create Stub Entity ]       [ Attach Mutation ]
+  [ Enqueue in JIT Backfill ]         │
+  [ Attach Mutation to Stub ]          ▼
+         │                     [ Run Pure Reducer ]
+         │                             │
+         ▼ (Time passes)               ▼
+  [ Backfill Crawls Base Act ]   [ Update Materialized ]
+  [ Hydrate Stub: is_stub=F ]    [   compiled_acts     ]
+         │
+         ▼ (Emit NormativeActHydrated)
+  [ Run Catch-Up Reducer on All Accumulated Mutations ]
 ```
 
-### Reducer Algorithmic Steps
+### Catch-Up Reducer Algorithmic Steps
 
-1. **Sort Mutations Chronologically**:
-   Sort input mutation list by `(effective_date ASC, publication_date ASC, created_at ASC)`.
-2. **Sequential Application**:
-   For each `mutation` in the sorted stream:
-   - **Case `ALTERACAO_NR`**:
-     1. Locate target node by `target_node_path`.
-     2. Push existing `current_text`, `status`, and `effective_date` into `target_node.history`.
-     3. Update `target_node.current_text = mutation.new_text`.
-     4. Set `target_node.status = DispositivoStatus.MODIFIED_ACTIVE`.
-   - **Case `REVOGACAO_EXPRESSA`**:
-     1. Locate target node by `target_node_path`.
-     2. Push metadata note to `target_node.history`.
-     3. Set `target_node.status = DispositivoStatus.REVOKED`.
-     4. **Subtree Cascade Invariant**: Recursively set all child nodes (parágrafos, incisos, alíneas) of the target node to `DispositivoStatus.REVOKED`.
-   - **Case `ACRESCIMO`**:
-     1. Parse parent path and target index (e.g. `art_3.inc_14` $\to$ parent: `art_3`, index: `inc_14`).
-     2. Locate parent node.
-     3. Construct new `DispositivoNode` with `status = DispositivoStatus.MODIFIED_ACTIVE`.
-     4. Insert child node into parent's `children` array adhering to natural statutory sequence (Roman numerals for incisos, alphabetical for alíneas).
-3. **Compile Projections**:
-   - Walk the final `CompiledAST` to generate hyperlinked, semantic HTML and Markdown with `<strike>` tags and annotation badges.
-   - Compute deterministic SHA-256 hash over the compiled AST JSON structure (`compiled_version_hash`).
+1. **Chronological Sorting**: Sort mutations by `(effective_date ASC, publication_date ASC, created_at ASC)`.
+2. **Apply Delta Stream**:
+   - `ALTERACAO_NR`: Push previous text to node history, set `current_text = mutation.new_text`, set `status = MODIFIED_ACTIVE`.
+   - `REVOGACAO_EXPRESSA`: Set `status = REVOKED`. **Cascade**: Recursively mark all child nodes in the subtree as `REVOKED`.
+   - `ACRESCIMO`: Insert new child node into parent's `children` array in correct statutory ordering.
+3. **Compilation**:
+   - Pre-render `compiled_html` and `compiled_markdown` with `<strike>` tags and hyperlinks.
+   - Calculate deterministic SHA-256 hash `compiled_version_hash`.
 
 ---
 
 ## 5. Acceptance Criteria (BDD Scenarios)
 
-### Scenario 1: `ALTERACAO_NR` with Historical Preservation & Formatting
-- **Given** an active statute with `art_3.inc_1` text: `"I - proposta mais vantajosa;"`.
-- **When** an amending act applies `ALTERACAO_NR` with text: `"I - proposta mais vantajosa e sustentável; (NR)"` from `Lei nº 14.000/2020`.
-- **Then** `art_3.inc_1.status` transitions to `MODIFIED_ACTIVE`.
-- **And** `art_3.inc_1.history` contains the previous text `"I - proposta mais vantajosa;"`.
-- **And** the compiled HTML renders:
-  ```html
-  <strike>I - proposta mais vantajosa;</strike>
-  <span class="vigente">I - proposta mais vantajosa e sustentável;</span>
-  <small class="nota-alteracao">(Redação dada pela <a href="/legislation/lei-14000-2020">Lei nº 14.000, de 2020</a>)</small>
-  ```
+### Scenario 1: Out-of-Order Mutation Ingestion Creates Stub without FK Failure
+- **Given** a new amending act (e.g., *Lei 14.133/2021*) that alters *Lei 8.666/1993*.
+- **And** *Lei 8.666/1993* does **not** exist in `normative_acts`.
+- **When** the mutation extractor processes the amendment.
+- **Then** a Stub record is inserted into `normative_acts` with `is_stub = True`, `act_number = "8666"`, `act_year = 1993`.
+- **And** the mutation is successfully saved in `normative_act_mutations` referencing the Stub ID.
+- **And** a task is enqueued in `legislation_backfill_queue` with `citation_count = 1`.
 
-### Scenario 2: `ACRESCIMO` Injects Leaf Node in Proper Order
-- **Given** `art_3` containing incisos `inc_1` (`I - ...`) and `inc_2` (`II - ...`).
-- **When** an amending act injects `inc_3` (`III - promoção da integridade pública;`).
-- **Then** `art_3.children` length increases from 2 to 3.
-- **And** `art_3.children[2].node_path` equals `"art_3.inc_3"`.
-- **And** the node is marked with `(Incluído pela Lei nº ...)`.
+### Scenario 2: Repeated Citations Increment JIT Backfill Priority
+- **Given** a Stub for *Lei 8.666/1993* already exists in `legislation_backfill_queue` with `citation_count = 1`.
+- **When** another amending act also cites and amends *Lei 8.666/1993*.
+- **Then** `citation_count` for that task increments to `2`.
+- **And** the second mutation is appended to `normative_act_mutations` without error.
 
-### Scenario 3: `REVOGACAO_EXPRESSA` Cascades to Child Subtrees
-- **Given** `art_5` containing `par_1` with two child incisos `inc_1` and `inc_2`.
-- **When** a revocation directive revokes `art_5.par_1`.
-- **Then** `art_5.par_1.status` becomes `REVOKED`.
-- **And** `art_5.par_1.inc_1.status` and `art_5.par_1.inc_2.status` both cascade to `REVOKED`.
-- **And** the entire paragraph and its incisos are enclosed within `<strike>` tags in `compiled_html`.
+### Scenario 3: Hydration of Base Act Triggers Event-Driven Catch-Up Consolidation
+- **Given** a Stub *Lei 8.666/1993* with 15 accumulated mutations recorded over time.
+- **When** a historical crawler ingests the authentic base text of *Lei 8.666/1993*.
+- **Then** the Stub is updated with `is_stub = False` and the genuine `raw_content`.
+- **And** the `NormativeActHydrated` domain event is fired.
+- **And** the AST Reducer processes all 15 historical mutations in chronological order.
+- **And** a valid `CompiledNormativeAct` projection is populated in `compiled_normative_acts`.
 
-### Scenario 4: Bi-Temporal Time-Travel Reconstructs Historical Point-in-Time State
-- **Given** a statute enacted on `2010-01-01` amended on `2015-06-01` and again on `2022-01-01`.
-- **When** a client queries `GET /legislation/:id?as_of=2018-12-31`.
-- **Then** the reducer applies only mutations where `effective_date <= '2018-12-31'`.
-- **And** mutations from `2022-01-01` are completely excluded from the resulting AST and HTML.
-
-### Scenario 5: Idempotent Replay on Zero-Scrape Re-Execution
-- **Given** a complete set of `normative_act_mutations` for a statute.
-- **When** the compiler runs repeatedly without new mutations.
-- **Then** `compiled_version_hash` remains identical.
-- **And** zero database write operations occur if the hash has not changed.
+### Scenario 4: API Response for Stub Statute
+- **Given** a statute that is currently an unhydrated Stub (`is_stub = True`).
+- **When** a client sends `GET /legislation/:id`.
+- **Then** the API returns HTTP 200 with `status = "PENDING_BASE_INGESTION"`.
+- **And** the response body includes the list of known mutations and amending statutes recorded in the ledger.
 
 ---
 
 ## 6. Test Strategy & Quality Gates
 
-| Test Level | Scope | Tools | Success Criteria |
+| Level | Scope | Tools | Acceptance Target |
 |---|---|---|---|
-| **Unit (Domain Core)** | `CanonicalNodePath`, `DispositivoNode`, `NormativeActAST` validation | `pytest` + `polyfactory` | 100% branch coverage; pure memory. |
-| **Unit (AST Reducer)** | State machine transitions, ordering, and cascade revocations | `pytest` | Validated against complex multi-amendment synthetic suites. |
-| **Integration (Persistence)** | `PostgresMutationRepository` and `CompiledActRepository` | `pytest` + PostgreSQL 16 test container | Verifies GIN indexes, LZ4 TOAST compression, and cascade deletes. |
+| **Unit (Domain Core)** | `CanonicalUrn`, `CanonicalNodePath`, `StubEntity` rules | `pytest` + `polyfactory` | 100% branch coverage; pure memory. |
+| **Unit (Out-of-Order Reducer)** | Catch-up reduction, mutation ordering, cascade revocations | `pytest` | 0 failures across 50+ out-of-order test scenarios. |
+| **Integration (Persistence & Events)** | Stub creation, JIT queue increments, `NormativeActHydrated` handler | `pytest` + PostgreSQL 16 test DB | Verifies cascade FKs, partial indexes, and JSONB queries. |
 | **Mutation Testing** | `src/lex/consolidation/` | `mutmut` | **0 surviving functional mutants**. |
-| **Property-Based Testing** | Node insertion ordering and chronological stability | `hypothesis` | Invariant: $\forall \text{ permutation of mutations}, \text{reduce}(\text{sort}(M)) \equiv \text{deterministic AST}$. |
 
 ---
 
-## 7. Telemetry, Observability & Performance SLOs
+## 7. Telemetry & Performance SLOs
 
 1. **Prometheus Domain Metrics**:
-   - `lex_mutations_extracted_total{mutation_type, source}`
-   - `lex_consolidation_duration_seconds{act_type}` (Histogram)
-   - `lex_time_travel_replay_duration_seconds` (Histogram)
-2. **Performance Service Level Objectives (SLOs)**:
-   - **$O(1)$ Current Version Read (`GET /legislation/:id`)**: $P_{99} < 5\text{ms}$.
-   - **$O(k)$ Time-Travel Point-in-Time Replay (`GET /legislation/:id?as_of=...`)**: $P_{99} < 20\text{ms}$ for statutes with up to 100 historical mutations.
+   - `lex_stub_entities_created_total{act_type}`
+   - `lex_backfill_queue_size{status="PENDING"}`
+   - `lex_catchup_consolidation_duration_seconds` (Histogram)
+2. **Performance SLOs**:
+   - **$O(1)$ Current Version Read**: $P_{99} < 5\text{ms}$.
+   - **Catch-Up Consolidation (50 Accumulated Mutations)**: $P_{99} < 15\text{ms}$.

@@ -19,6 +19,10 @@ from lex.ingestion.domain.value_objects import (
     IngestionStatus,
     TerritoryId,
 )
+from lex.shared_kernel.value_objects import (
+    HierarchicalGroup,
+    PublicationNature,
+)
 
 
 from mutmut.mutation.trampoline import wrap_in_trampoline as _mutmut_mutated, MutantDict
@@ -96,6 +100,11 @@ class NormativeAct(BaseModel):
     structured_content: dict[str, object] | None = None
     classification_source: ClassificationSource = ClassificationSource.PRE_SEGMENTED_SOURCE
     classification_confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    hierarchical_group: HierarchicalGroup = HierarchicalGroup.GRUPO_8_PUBLICIDADE_EXTRATOS
+    hierarchical_rank: int = 10
+    publication_nature: PublicationNature = PublicationNature.PUBLICIDADE_OPERACIONAL
+    canonical_urn: str | None = None
+    is_stub: bool = False
     metadata_json: dict[str, object] | None = None
     scraped_at: datetime
 

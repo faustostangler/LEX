@@ -84,6 +84,10 @@ class LexSettings(BaseSettings):
         default="INFO",
         description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
     )
+    log_file: str = Field(
+        default="logs/crawler.log",
+        description="Destination log file for Scrapy engine audit trail",
+    )
     sentry_dsn: str = Field(
         default="",
         description="Optional Sentry DSN for error telemetry",
@@ -109,3 +113,14 @@ class LexSettings(BaseSettings):
         if self.database_url is None:
             raise ValueError("Mandatory configuration missing: LEX_DATABASE_URL must be defined.")
         return self
+
+
+_SETTINGS_INSTANCE: LexSettings | None = None
+
+
+def get_settings() -> LexSettings:
+    """Returns the cached singleton LexSettings instance, failing fast on invalid env."""
+    global _SETTINGS_INSTANCE
+    if _SETTINGS_INSTANCE is None:
+        _SETTINGS_INSTANCE = LexSettings()
+    return _SETTINGS_INSTANCE

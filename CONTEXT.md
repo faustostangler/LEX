@@ -1,8 +1,8 @@
-# LEX — Ingestion Bounded Context
+# LEX — Ingestion, Treatment & Consolidation Bounded Contexts
 
-LEX (Legislação, Extração e Estruturação) ingests, digests, and exposes Brazilian legislation across Federal, State, and Municipal tiers as clean structured data.
+LEX (Legislação, Extração e Estruturação) ingests, digests, classifies, and exposes Brazilian legislation across Federal, State, and Municipal tiers as clean structured data.
 
-## Language
+## Ubiquitous Language
 
 **OfficialGazette**:
 The periodic official publication of a federative entity containing administrative and normative acts.
@@ -25,7 +25,7 @@ The streaming transformation of binary payload streams (PDF) into plain structur
 _Avoid_: File caching, binary downloading, local storage.
 
 **SingleSourceOfTruthUrl (SSOT URL)**:
-The canonical, external HTTP/HTTPS link to the original publication source of a **GazetteEdition**.
+The canonical, external HTTP/HTTPS link to the original publication source of a **GazetteEdition** or **NormativeAct**.
 _Avoid_: Link, web address, download link.
 
 **DomainCircuitBreaker**:
@@ -40,49 +40,85 @@ _Avoid_: Batch run, crawl job, task execution.
 An untyped, transient Data Transfer Object (DTO) yielded by a spider containing raw web strings, headers, and in-memory byte streams before domain validation.
 _Avoid_: Raw item, scrapy item, raw data.
 
+**RawNormativeActPayload**:
+An untyped DTO representing an individual discrete legislative/administrative act yielded by a spider before domain normalization.
+_Avoid_: Article payload, raw item.
+
 **GazetteMapper**:
-An Anti-Corruption Layer (ACL) translator that transforms a **RawGazettePayload** into a strictly validated **GazetteEdition** domain entity.
+An Anti-Corruption Layer (ACL) translator that transforms a **RawGazettePayload** or **RawNormativeActPayload** into strictly validated **GazetteEdition** and **NormativeAct** domain entities with $O(1)$ fast prefix hierarchy resolution.
 _Avoid_: Parser, converter, transformer.
 
 **NormativeAct**:
-An individual, segmented legislative or administrative rule (e.g., Lei, Decreto, Portaria, Resolução) published within a parent **GazetteEdition**.
+An individual, segmented legislative or administrative rule (e.g., Lei, Decreto, Portaria, Resolução, Extrato) published within a parent **GazetteEdition**.
 _Avoid_: Law, rule, item, document, text snippet.
 
-**NormativeLevel**:
-The constitutional and administrative rank of a **NormativeAct** (e.g., `constituicao`, `lei_complementar`, `lei_ordinaria`, `decreto`, `portaria`, `resolucao`).
-_Avoid_: Law type, legal rank, hierarchy type.
+**HierarchicalGroup (Estrato Kelseniano)**:
+The eight empirical publication strata grounded in Hans Kelsen's pyramid of norms and Brazilian positive law:
+- `Grupo 1`: Atos Primários Constitucionais e Legislativos (CF, EC, LC, Lei Ordinária, MP, Decreto Legislativo).
+- `Grupo 2`: Decretos do Chefe do Executivo.
+- `Grupo 3`: Atos Normativos Secundários Colegiados e Regulatórios (Resoluções, Deliberações, INs, Provimentos).
+- `Grupo 4`: Atos Ordinatórios Ministeriais e Internos (Portarias, Atos Declaratórios).
+- `Grupo 5`: Atos Administrativos Decisórios e Regulatórios Concretos (Acórdãos, Decisões, Despachos, Alvarás).
+- `Grupo 6`: Instrumentos Editalícios e Convocatórios (Editais, Atos Convocatórios, Atas).
+- `Grupo 7`: Instrumentos Contratuais e Convênios (Contratos, Termos Aditivos, Convênios).
+- `Grupo 8`: Instrumentos de Publicidade e Operacionais (Extratos, Avisos de Licitação, Resultados, Retificações, Pautas).
+_Avoid_: Category, group number, tier enum.
 
-**ThematicDomain**:
-The standardized subject matter classification of a **NormativeAct** (e.g., `health`, `taxation`, `labor`, `transport`, `environment`).
-_Avoid_: Category, topic, subject, tag.
+**HierarchicalRank (Peso de Autoridade Normativa)**:
+A bounded integer weight $[10, 100]$ enforcing constitutional and LINDB validity rules (*Lex Superior Derogat Inferiori*).
+_Avoid_: Level score, rank number.
 
-**IssuingAuthority**:
-The government ministry, regulatory agency, or administrative body that promulgated a **NormativeAct** (e.g., `Presidência da República`, `ANVISA`, `Banco Central`).
-_Avoid_: Author, department, issuer, body.
+**PublicationNature**:
+The operational classification determining the processing track:
+- `normativa_abstrata` / `regulatoria_setorial` $\to$ Dispatches to **Trilha A (Deep AST & Consolidation)**.
+- `concreta_individual` / `publicidade_operacional` $\to$ Dispatches to **Trilha B (Fast-Path Entity Extraction / NER)**.
+_Avoid_: Category type, tag.
 
-**TemporalStatus**:
-The operational legal efficacy state of a **NormativeAct**: `active` (vigente) or `historical` (revogada, exaurida, ou com vigência encerrada).
-_Avoid_: Status, legal state, validity condition.
+**DualTrackPipeline**:
+The architectural separation of processing paths where true general norms undergo full AST parsing and mutation ledgering while high-volume operational/contractual notices undergo fast-path structured NER.
+_Avoid_: Parallel processing, dual runners.
+
+**CanonicalUrn**:
+The unique, immutable LexML/FRBR uniform resource identifier for a statute (e.g., `urn:lex:br:federal:lei:1993-06-21;8666`).
+_Avoid_: System ID, law link, string key.
+
+**CanonicalNodePath**:
+The dot-separated hierarchical address of a legislative provision (e.g., `art_3.par_2.inc_14.ali_a`).
+_Avoid_: Article path, xpath, css selector.
+
+**NormativeActMutation**:
+An atomic, immutable event delta recording a statutory amendment (e.g., `ALTERACAO_NR`, `ACRESCIMO`, `REVOGACAO_EXPRESSA`) targeting a specific **CanonicalNodePath**.
+_Avoid_: Law patch, diff item, update row.
+
+**CompiledNormativeAct**:
+The materialized read-model projection containing the consolidated AST (JSONB) and pre-rendered LZ4 TOAST HTML/Markdown with strike-through tags and historical notes.
+_Avoid_: Final law, merged text, output file.
+
+**StubEntity (Skeleton Entity)**:
+A lightweight placeholder record in `normative_acts` (`is_stub = True`) created when an amendment references an older historical statute that has not yet been ingested, preserving relational foreign keys and enqueuing the missing act into the **LegislationBackfillQueue**.
+_Avoid_: Phantom record, dummy row, temp law.
+
+**LegislationBackfillQueue**:
+A priority-ranked discovery queue tracking uningested historical base statutes, where priority dynamically increments with every citation in modern gazettes.
+_Avoid_: Task list, scrape queue.
 
 **DeterministicClassifier**:
 A fast, rule-based parsing engine that extracts and categorizes **NormativeAct** attributes via structural regexes, ementa boundaries, and canonical ontology maps.
 _Avoid_: Regular expression parser, rule engine, text matcher.
 
-**HeuristicFeedbackFlywheel**:
-An active learning mechanism where ambiguous cases resolved by the LLM fallback are logged as golden dataset samples to continuously expand and harden the **DeterministicClassifier** in subsequent code revisions.
-_Avoid_: Feedback loop, training pipeline, active learning script.
+**LexSuperiorValidation**:
+A domain invariant enforcing the principle that an act of inferior **HierarchicalRank** cannot modify, suspend, or revoke an act of superior rank, raising a `LexSuperiorViolationError` if violated.
+_Avoid_: Rank check, permission validator.
 
-**AmbiguityScore**:
-A bounded numeric confidence value $[0.0, 1.0]$ determining whether a segmented act is definitively resolved by the **DeterministicClassifier** or requires LLM fallback.
-_Avoid_: Uncertainty level, accuracy, probability score.
+---
 
-## Example Dialogue
+## Example Architectural Dialogue
 
-**Architect**: "When the spider fetches a new **OfficialGazette**, does it persist the PDF?"
-**Engineer**: "No, it performs **EphemeralTextExtraction** to extract raw text and metadata, records the **SingleSourceOfTruthUrl**, and stores the resulting **GazetteEdition** in PostgreSQL."
-**Architect**: "And how does the Treatment context digest that container?"
-**Engineer**: "The **DeterministicClassifier** segments and classifies standard acts. If an act has a high **AmbiguityScore**, it triggers an LLM fallback, which feeds the **HeuristicFeedbackFlywheel** to improve our deterministic rules in the next release."
-**Architect**: "And what happens if a state portal goes down during a **CrawlSession**?"
-**Engineer**: "The **DomainCircuitBreaker** opens for that specific domain after consecutive failures, allowing other state spiders to proceed uninterrupted."
-**Architect**: "And how do we identify whether it belongs to a city or a state?"
-**Engineer**: "Through the **Territory** IBGE code and its **FederativeTier**."
+**Architect**: "When the scraper encounters a `PORTARIA` in `secao_1` that modifies a previous regulation, how is it processed?"  
+**Engineer**: "The **GazetteMapper** classifies it as `Grupo 4` (Rank 40, `normativa_abstrata`), routing it to **Trilha A**. The **MutationExtractor** identifies the target **CanonicalNodePath** (e.g., `art_2.inc_1`), validates **LexSuperiorValidation** against the target's **HierarchicalRank**, and appends the delta to **NormativeActMutation**."
+
+**Architect**: "And what happens if a modern 2024 gazette amends a 1966 statute not yet in PostgreSQL?"  
+**Engineer**: "The repository creates a **StubEntity** with `is_stub = True` under its **CanonicalUrn**, links the mutation via foreign key, and enqueues a priority task in the **LegislationBackfillQueue**. When the historical crawler ingests the 1966 base text, it fires `NormativeActHydrated`, and the **Pure AST Reducer** compiles the entire 58-year mutation history into **CompiledNormativeAct** in under 10 milliseconds."
+
+**Architect**: "And how does the system handle the 70,000 monthly `EXTRATO DE CONTRATO` and `AVISO DE LICITAÇÃO` items?"  
+**Engineer**: "The **GazetteMapper** resolves them to `Grupo 8` (Rank 10, `publicidade_operacional`), routing them directly to **Trilha B** for fast regex entity extraction (CNPJ, values, bidding numbers) into `metadata_json` without wasting CPU on AST recursion."

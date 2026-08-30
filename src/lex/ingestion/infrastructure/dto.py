@@ -16,7 +16,7 @@ class RawGazettePayload:
     territory_code: str
     tier: str
     source_url: str
-    raw_content: bytes | str = field(default="", repr=False)
+    raw_content: bytes | str | None = field(default="", repr=False)
     total_acts: int = 0
     raw_date_str: str | None = None
     date_obj: date | None = None

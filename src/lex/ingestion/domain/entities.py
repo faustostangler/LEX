@@ -19,6 +19,10 @@ from lex.ingestion.domain.value_objects import (
     IngestionStatus,
     TerritoryId,
 )
+from lex.shared_kernel.value_objects import (
+    HierarchicalGroup,
+    PublicationNature,
+)
 
 
 class GazetteEdition(BaseModel):
@@ -93,23 +97,32 @@ class NormativeAct(BaseModel):
     structured_content: dict[str, object] | None = None
     classification_source: ClassificationSource = ClassificationSource.PRE_SEGMENTED_SOURCE
     classification_confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    hierarchical_group: HierarchicalGroup = HierarchicalGroup.GRUPO_8_PUBLICIDADE_EXTRATOS
+    hierarchical_rank: int = 10
+    publication_nature: PublicationNature = PublicationNature.PUBLICIDADE_OPERACIONAL
+    canonical_urn: str | None = None
+    is_stub: bool = False
     metadata_json: dict[str, object] | None = None
     scraped_at: datetime
 
     @model_validator(mode="after")
     def _validate_invariants(self) -> Self:
         """Enforces domain invariants on the discrete normative act."""
-        clean_content = self.raw_content.strip()
-        if not clean_content:
-            raise DomainInvariantViolationError(
-                "raw_content must contain non-whitespace legislative content."
-            )
-
         if not self.title.strip():
             raise DomainInvariantViolationError("title cannot be empty.")
 
         if not self.act_type.strip():
             raise DomainInvariantViolationError("act_type cannot be empty.")
+
+        if self.is_stub:
+            # Stubs are placeholders for out-of-order reference resolution
+            return self
+
+        clean_content = self.raw_content.strip()
+        if not clean_content:
+            raise DomainInvariantViolationError(
+                "raw_content must contain non-whitespace legislative content."
+            )
 
         if self.char_count <= 0:
             raise DomainInvariantViolationError("char_count must be strictly positive.")

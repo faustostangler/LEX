@@ -142,6 +142,56 @@ class TestFederalDouSpider:
         assert act_2.act_year == 2024
 
     @pytest.mark.anyio
+    async def test_spider_parse_modern_section_chunks_large_editions(
+        self,
+    ) -> None:
+        """Scenario: Large editions exceeding DEFAULT_ACT_BATCH_SIZE stream in chunks."""
+        spider = FederalDouSpider(start_date="2024-01-02", end_date="2024-01-02")
+
+        # Create 120 mock articles (exceeds default batch size of 50)
+        articles_data = [
+            {
+                "pubName": "DO1",
+                "urlTitle": f"portaria-{i}",
+                "title": f"PORTARIA Nº {i}, DE 2 DE JANEIRO DE 2024",
+                "editionNumber": "1",
+                "hierarchyStr": "Ministério da Fazenda",
+                "content": f"Art. {i}...",
+            }
+            for i in range(120)
+        ]
+        mock_json = {
+            "dateUrl": "02-01-2024",
+            "section": "DO1",
+            "jsonArray": articles_data,
+        }
+        html = f"<script id='params' type='application/json'>{json.dumps(mock_json)}</script>"
+        request = Request(
+            url="https://www.in.gov.br/leiturajornal?data=02-01-2024&secao=do1",
+            meta={
+                "gazette_date": date(2024, 1, 2),
+                "section_key": "do1",
+                "section_name": "secao_1",
+                "is_extra": False,
+            },
+        )
+        response = HtmlResponse(url=request.url, body=html.encode("utf-8"), request=request)
+
+        items: list[RawGazettePayload | RawNormativeActPayload] = []
+        async for item in spider.parse_modern_section(response):
+            items.append(item)
+
+        # 1 edition header + 120 discrete acts = 121 items
+        assert len(items) == 121
+        assert isinstance(items[0], RawGazettePayload)
+        assert items[0].total_acts == 120
+
+        # Verify all 120 acts yielded in exact sequential order
+        for idx, act_item in enumerate(items[1:]):
+            assert isinstance(act_item, RawNormativeActPayload)
+            assert act_item.act_number == str(idx)
+
+    @pytest.mark.anyio
     async def test_spider_zero_scrape_skip_when_already_completed(self) -> None:
         """Scenario: Zero-Scrape skip avoids crawling when edition is already completed."""
         mock_repo = MagicMock(spec=GazetteRepositoryPort)

@@ -89,11 +89,9 @@ module = [
     "scrapy.*",
     "pypdf.*",
     "twisted.*",
-    "polyfactory.*",
-    "prometheus_client.*",
 ]
 ignore_missing_imports = true
 
 [tool.mutmut]
-source_paths = ["src/lex/ingestion/domain/"]
-pytest_add_cli_args_test_selection = ["tests/ingestion/domain/"]
+source_paths = ["src/lex/"]
+pytest_add_cli_args_test_selection = ["tests/"]
