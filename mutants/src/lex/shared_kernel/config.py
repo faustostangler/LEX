@@ -87,6 +87,10 @@ class LexSettings(BaseSettings):
         default="INFO",
         description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
     )
+    log_file: str = Field(
+        default="logs/crawler.log",
+        description="Destination log file for Scrapy engine audit trail",
+    )
     sentry_dsn: str = Field(
         default="",
         description="Optional Sentry DSN for error telemetry",
@@ -112,3 +116,44 @@ class LexSettings(BaseSettings):
         if self.database_url is None:
             raise ValueError("Mandatory configuration missing: LEX_DATABASE_URL must be defined.")
         return self
+
+
+_SETTINGS_INSTANCE: LexSettings | None = None
+mutants_x_get_settings__mutmut: MutantDict = {}  # type: ignore
+
+
+@_mutmut_mutated(mutants_x_get_settings__mutmut)
+def get_settings() -> LexSettings:
+    """Returns the cached singleton LexSettings instance, failing fast on invalid env."""
+    global _SETTINGS_INSTANCE
+    if _SETTINGS_INSTANCE is None:
+        _SETTINGS_INSTANCE = LexSettings()
+    return _SETTINGS_INSTANCE
+
+
+def x_get_settings__mutmut_orig() -> LexSettings:
+    """Returns the cached singleton LexSettings instance, failing fast on invalid env."""
+    global _SETTINGS_INSTANCE
+    if _SETTINGS_INSTANCE is None:
+        _SETTINGS_INSTANCE = LexSettings()
+    return _SETTINGS_INSTANCE
+
+
+def x_get_settings__mutmut_1() -> LexSettings:
+    """Returns the cached singleton LexSettings instance, failing fast on invalid env."""
+    global _SETTINGS_INSTANCE
+    if _SETTINGS_INSTANCE is not None:
+        _SETTINGS_INSTANCE = LexSettings()
+    return _SETTINGS_INSTANCE
+
+
+def x_get_settings__mutmut_2() -> LexSettings:
+    """Returns the cached singleton LexSettings instance, failing fast on invalid env."""
+    global _SETTINGS_INSTANCE
+    if _SETTINGS_INSTANCE is None:
+        _SETTINGS_INSTANCE = None
+    return _SETTINGS_INSTANCE
+
+mutants_x_get_settings__mutmut['_mutmut_orig'] = x_get_settings__mutmut_orig # type: ignore # mutmut generated
+mutants_x_get_settings__mutmut['x_get_settings__mutmut_1'] = x_get_settings__mutmut_1 # type: ignore # mutmut generated
+mutants_x_get_settings__mutmut['x_get_settings__mutmut_2'] = x_get_settings__mutmut_2 # type: ignore # mutmut generated

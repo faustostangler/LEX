@@ -115,3 +115,41 @@ def test_cli_init_db_routing() -> None:
     with patch("lex.cli.init_db") as mock_init_db:
         main(["init-db"])
         mock_init_db.assert_called_once()
+
+
+def test_cli_treat_routing() -> None:
+    """Scenario: 'treat' command calls run_treat function."""
+    with patch("lex.cli.run_treat") as mock_run_treat:
+        main(["treat", "--date", "2024-01-15", "--territory", "BR", "--limit", "50"])
+        mock_run_treat.assert_called_once_with(
+            date_str="2024-01-15",
+            territory="BR",
+            limit=50,
+        )
+
+
+def test_cli_compile_routing() -> None:
+    """Scenario: 'compile' command calls run_compile function."""
+    with patch("lex.cli.run_compile") as mock_run_compile:
+        main(["compile", "urn:lex:br:federal:lei:1993;8666"])
+        mock_run_compile.assert_called_once_with(identifier="urn:lex:br:federal:lei:1993;8666")
+
+
+def test_cli_query_routing() -> None:
+    """Scenario: 'query' command calls run_query function."""
+    with patch("lex.cli.run_query") as mock_run_query:
+        main(
+            [
+                "query",
+                "urn:lex:br:federal:lei:1993;8666",
+                "--as-of",
+                "2020-01-01",
+                "--format",
+                "html",
+            ]
+        )
+        mock_run_query.assert_called_once_with(
+            identifier="urn:lex:br:federal:lei:1993;8666",
+            as_of="2020-01-01",
+            output_format="html",
+        )

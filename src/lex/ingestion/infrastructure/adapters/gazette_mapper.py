@@ -207,6 +207,78 @@ HIERARCHY_MATCHING_TABLE: list[
         PublicationNature.NORMATIVA_ABSTRATA,
     ),
     (
+        "RESOLUÇÃO-RE",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "RESOLUCAO-RE",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "RESOLUÇÃO RE",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "RESOLUCAO RE",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "RESOLUÇÃO ESPECÍFICA",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "RESOLUCAO ESPECIFICA",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "RESOLUÇÃO AUTORIZATIVA",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "RESOLUCAO AUTORIZATIVA",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "RESOLUÇÃO HOMOLOGATÓRIA",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "RESOLUCAO HOMOLOGATORIA",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "RESOLUÇÃO OPERACIONAL",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
+        "RESOLUCAO OPERACIONAL",
+        HierarchicalGroup.GRUPO_5_DECISORIO_CONCRETO,
+        HierarchicalRank.ATO_ADMINISTRATIVO_CONCRETO,
+        PublicationNature.CONCRETA_INDIVIDUAL,
+    ),
+    (
         "RESOLUÇÃO",
         HierarchicalGroup.GRUPO_3_COLEGIADO_REGULATORIO,
         HierarchicalRank.RESOLUCAO_REGULATORIA,
@@ -352,11 +424,35 @@ def resolve_hierarchy(
 ) -> tuple[HierarchicalGroup, int, PublicationNature]:
     """Deterministically classify an act based on act_type and official gazette section."""
     clean_type = act_type.strip().upper()
+    clean_sec = (section or "").strip().lower()
 
+    # Invariant: Section 2 of official gazettes is strictly dedicated to Personnel Acts (Trilha B)
+    if clean_sec == "secao_2":
+        for prefix, group, rank, _ in HIERARCHY_MATCHING_TABLE:
+            if clean_type.startswith(prefix):
+                return (group, int(rank), PublicationNature.CONCRETA_INDIVIDUAL)
+        return (
+            HierarchicalGroup.GRUPO_4_ORDINATORIO_MINISTERIAL,
+            int(HierarchicalRank.PORTARIA_NORMATIVA),
+            PublicationNature.CONCRETA_INDIVIDUAL,
+        )
+
+    # Invariant: Section 3 is strictly dedicated to Procurement, Contracts, Notices (Trilha B)
+    if clean_sec == "secao_3":
+        for prefix, group, rank, _ in HIERARCHY_MATCHING_TABLE:
+            if clean_type.startswith(prefix):
+                return (group, int(rank), PublicationNature.PUBLICIDADE_OPERACIONAL)
+        return (
+            HierarchicalGroup.GRUPO_8_PUBLICIDADE_EXTRATOS,
+            int(HierarchicalRank.PUBLICIDADE_OPERACIONAL),
+            PublicationNature.PUBLICIDADE_OPERACIONAL,
+        )
+
+    # Section 1 or unspecified: Standard Normative Rules (Trilha A where applicable)
     for prefix, group, rank, nature in HIERARCHY_MATCHING_TABLE:
         if clean_type.startswith(prefix):
             # Portaria published in Section 1 is normative regulation (Trilha A)
-            if prefix == "PORTARIA" and section == "secao_1":
+            if prefix == "PORTARIA" and clean_sec == "secao_1":
                 return (group, int(rank), PublicationNature.NORMATIVA_ABSTRATA)
             return (group, int(rank), nature)
 

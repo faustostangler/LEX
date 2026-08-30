@@ -1,7 +1,15 @@
 {
-    "exit_code_by_key": {},
-    "hash_by_function_name": {},
+    "exit_code_by_key": {
+        "lex.shared_kernel.config.x_get_settings__mutmut_1": 33,
+        "lex.shared_kernel.config.x_get_settings__mutmut_2": 33
+    },
+    "hash_by_function_name": {
+        "x_get_settings": "cae671ff44fd"
+    },
     "type_check_error_by_key": {},
     "durations_by_key": {},
-    "estimated_durations_by_key": {}
+    "estimated_durations_by_key": {
+        "lex.shared_kernel.config.x_get_settings__mutmut_1": 0,
+        "lex.shared_kernel.config.x_get_settings__mutmut_2": 0
+    }
 }

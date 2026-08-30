@@ -12,12 +12,12 @@ from typing import Any
 RE_CNPJ = re.compile(r"\b\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}\b")
 RE_CPF = re.compile(r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\b")
 RE_PROCESSO = re.compile(
-    r"(?:[Pp]rocesso|[Nn]º\s+[Pp]rocesso)[\s:]*([\d\.\/\-]+)",
+    r"(?:[Pp]rocesso|[Nn]º\s+[Pp]rocesso|[Pp][Aa]\s+n[ºo°\.]?)\s*[:\s]*([\d\.\/\-]+)",
     re.IGNORECASE,
 )
 RE_LICITACAO = re.compile(
-    r"\b(Pregão\s+Eletrônico|Pregão\s+Presencial|Concorrência|Dispensa\s+de\s+Licitação|"
-    r"Inexigibilidade\s+de\s+Licitação|Tomada\s+de\s+Preços|Convite|Leilão)\s*"
+    r"\b(Preg[ãa]o\s+Eletr[ôo]nico|Preg[ãa]o\s+Presencial|Concorr[êe]ncia|Dispensa\s+de\s+Licita[çc][ãa]o|"
+    r"Inexigibilidade\s+de\s+Licita[çc][ãa]o|Tomada\s+de\s+Pre[çc]os|Convite|Leil[ãa]o)\s*"
     r"(?:N[ºo°\.]?\s*)?([\d\.\/\-]+)",
     re.IGNORECASE,
 )
@@ -33,6 +33,43 @@ RE_OBJETO = re.compile(
     r"Objeto[\s:]*([^\n\r]+)",
     re.IGNORECASE,
 )
+
+# Section 2: Personnel Acts Regex Constants
+RE_PESSOAL_ACAO = re.compile(
+    r"\b(DESIGNAR|NOMEAR|EXONERAR|DISPENSAR|DECLARAR\s+APOSENTAD[OA]|REMOVER|SUBSTITUIR|"
+    r"CONCEDER\s+APOSENTADORIA|CONCEDER\s+PENS[AÃ]O|DECLARAR\s+VAC[AÂ]NCIA)\b",
+    re.IGNORECASE,
+)
+RE_SERVIDOR_NOME = re.compile(
+    r"(?:servidor(?:a)?|bacharel(?:a)?)\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ\s]{4,60}?)"
+    r"(?:\s*[\(,–\-]|\s+para\b|\s+ocupante\b|\s+matrícula\b|\s+siape\b)",
+    re.IGNORECASE,
+)
+RE_MATRICULA = re.compile(
+    r"(?:(?:matrícula|siape|registro\s+funcional)[\s:nº°]*|\()(\d{4,10})\)?",
+    re.IGNORECASE,
+)
+RE_CARGO_ORIGEM = re.compile(
+    r"(?:ocupante\s+do\s+cargo\s+de|titular\s+do\s+cargo\s+de)\s+"
+    r"([A-ZÁÉÍÓÚÂÊÔÃÕÇ\w\s\-_\/]{3,60}?)(?:,|\s+Área|\s+para\b)",
+    re.IGNORECASE,
+)
+RE_CARGO_DESTINO = re.compile(
+    r"(?:cargo\s+em\s+comissão\s+de|função\s+comissionada\s+de|função\s+de|"
+    r"para\s+exercer[,\s\w]*?\s+o\s+cargo\s+(?:em\s+comissão\s+)?de)\s+"
+    r"([A-ZÁÉÍÓÚÂÊÔÃÕÇ0-9\-_/\s]{3,60}?)"
+    r"(?:,|\s+do\s+GABINETE|\s+do\s+DEPARTAMENTO|\s+da\s+SECRETARIA|\s+no\b|\s+na\b|\s+nos\b|\s+nas\b|$)",
+    re.IGNORECASE,
+)
+
+PESSOAL_ACTION_MAP: dict[str, str] = {
+    "designar": "DESIGNACAO",
+    "nomear": "NOMEACAO",
+    "exonerar": "EXONERACAO",
+    "dispensar": "DISPENSA",
+    "remover": "REMOCAO",
+    "substituir": "SUBSTITUICAO",
+}
 
 
 def _mask_cpf(cpf: str) -> str:
@@ -93,7 +130,7 @@ class DeterministicNerExtractor:
         # 3. Process Number extraction
         proc_matches = RE_PROCESSO.findall(text)
         if proc_matches:
-            clean_procs = [p.strip(" .;") for p in proc_matches if len(p.strip()) >= 5]
+            clean_procs = [p.strip(" .;") for p in proc_matches if len(p.strip(" .;")) >= 5]
             if clean_procs:
                 entities["processos"] = list(dict.fromkeys(clean_procs))
 
@@ -149,5 +186,61 @@ class DeterministicNerExtractor:
             obj_text = m_obj.group(1).strip(" .;")
             if obj_text:
                 entities["objeto"] = obj_text
+
+        # 8. Section 2 Personnel Acts Extraction
+        m_acao = RE_PESSOAL_ACAO.search(text)
+        if m_acao:
+            raw_act = m_acao.group(1).lower().strip()
+            if "aposentad" in raw_act:
+                act_norm = "APOSENTADORIA"
+            elif "dispens" in raw_act:
+                act_norm = "DISPENSA"
+            elif "pens" in raw_act:
+                act_norm = "PENSAO"
+            elif "vac" in raw_act:
+                act_norm = "VACANCIA"
+            else:
+                act_norm = PESSOAL_ACTION_MAP.get(raw_act, raw_act.upper())
+            entities["tipo_ato_pessoal"] = act_norm
+
+        m_serv = RE_SERVIDOR_NOME.search(text)
+        if m_serv:
+            clean_serv = m_serv.group(1).strip()
+            if clean_serv:
+                entities["servidor_nome"] = clean_serv
+
+        m_mat = RE_MATRICULA.search(text)
+        if m_mat:
+            entities["servidor_matricula"] = m_mat.group(1).strip()
+
+        m_cg_orig = RE_CARGO_ORIGEM.search(text)
+        if m_cg_orig:
+            entities["cargo_origem"] = m_cg_orig.group(1).strip()
+
+        m_cg_dest = RE_CARGO_DESTINO.search(text)
+        if m_cg_dest:
+            entities["cargo_destino"] = m_cg_dest.group(1).strip()
+
+        # 9. Batch Discovery & Manual Triage Classification
+        has_business_entities = bool(
+            entities.get("cnpjs")
+            or entities.get("cpfs_masked")
+            or entities.get("processos")
+            or entities.get("licitacao_modalidade")
+            or entities.get("valor_total")
+            or entities.get("vigencia_inicio")
+            or entities.get("objeto")
+            or entities.get("tipo_ato_pessoal")
+            or entities.get("servidor_nome")
+            or entities.get("cargo_destino")
+        )
+
+        if has_business_entities:
+            entities["triage_status"] = "EXTRACTED"
+            entities["needs_manual_review"] = False
+        else:
+            entities["triage_status"] = "UNCLASSIFIED_TRILHA_B"
+            entities["needs_manual_review"] = True
+            entities["triage_sample"] = text[:300].strip()
 
         return entities

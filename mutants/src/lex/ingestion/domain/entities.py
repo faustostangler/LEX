@@ -111,17 +111,21 @@ class NormativeAct(BaseModel):
     @model_validator(mode="after")
     def _validate_invariants(self) -> Self:
         """Enforces domain invariants on the discrete normative act."""
-        clean_content = self.raw_content.strip()
-        if not clean_content:
-            raise DomainInvariantViolationError(
-                "raw_content must contain non-whitespace legislative content."
-            )
-
         if not self.title.strip():
             raise DomainInvariantViolationError("title cannot be empty.")
 
         if not self.act_type.strip():
             raise DomainInvariantViolationError("act_type cannot be empty.")
+
+        if self.is_stub:
+            # Stubs are placeholders for out-of-order reference resolution
+            return self
+
+        clean_content = self.raw_content.strip()
+        if not clean_content:
+            raise DomainInvariantViolationError(
+                "raw_content must contain non-whitespace legislative content."
+            )
 
         if self.char_count <= 0:
             raise DomainInvariantViolationError("char_count must be strictly positive.")

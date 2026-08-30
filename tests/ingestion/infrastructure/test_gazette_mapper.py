@@ -237,6 +237,27 @@ class TestGazetteMapper:
                 PublicationNature.REGULATORIA_SETORIAL,
             ),
             (
+                "DECRETO",
+                "secao_2",
+                HierarchicalGroup.GRUPO_2_EXECUTIVO,
+                60,
+                PublicationNature.CONCRETA_INDIVIDUAL,
+            ),
+            (
+                "DECRETOS",
+                "secao_2",
+                HierarchicalGroup.GRUPO_2_EXECUTIVO,
+                60,
+                PublicationNature.CONCRETA_INDIVIDUAL,
+            ),
+            (
+                "DECRETO",
+                "secao_3",
+                HierarchicalGroup.GRUPO_2_EXECUTIVO,
+                60,
+                PublicationNature.PUBLICIDADE_OPERACIONAL,
+            ),
+            (
                 "PORTARIA",
                 "secao_1",
                 HierarchicalGroup.GRUPO_4_ORDINATORIO_MINISTERIAL,

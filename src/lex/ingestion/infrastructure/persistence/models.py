@@ -178,6 +178,7 @@ class NormativeActModel(Base):
         Index("ix_normative_acts_territory_date", "territory_id", "date"),
         Index("ix_normative_acts_hierarchy", "hierarchical_group", text("date DESC")),
         Index("ix_normative_acts_nature", "publication_nature"),
+        Index("ix_normative_acts_section", "section"),
         Index("ix_normative_acts_urn", "canonical_urn"),
         Index("ix_normative_acts_hierarchy_gin", "hierarchy", postgresql_using="gin"),
         Index(

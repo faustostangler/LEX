@@ -95,5 +95,13 @@ module = [
 ignore_missing_imports = true
 
 [tool.mutmut]
-source_paths = ["src/lex/"]
-pytest_add_cli_args_test_selection = ["tests/"]
+source_paths = [
+    "src/lex/treatment/",
+    "src/lex/consolidation/",
+    "src/lex/shared_kernel/",
+    "src/lex/ingestion/",
+]
+pytest_add_cli_args_test_selection = [
+    "tests/treatment/",
+    "tests/consolidation/",
+]

@@ -150,6 +150,9 @@ cookies_*.txt
 # docs references
 sandbox/*
 
+mutants/*.meta
+mutants/*.spans
+
 
 playground/*
 *.tmp

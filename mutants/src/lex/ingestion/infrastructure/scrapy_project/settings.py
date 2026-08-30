@@ -4,6 +4,9 @@ Configures AutoThrottle, Decorrelated Jitter Retry Middleware, Domain Circuit Br
 and Ingestion Pipelines adhering to the Hexagonal Architecture and 12-Factor App standards.
 """
 
+import os
+from pathlib import Path
+
 BOT_NAME = "lex_bot"
 
 SPIDER_MODULES = [
@@ -84,9 +87,15 @@ RETRY_MAX_DELAY = 60.0
 RETRY_TIMES = 3
 RETRY_HTTP_CODES = [408, 429, 500, 502, 503, 504]
 
-# Clean Terminal Logging & Progress Configuration
-LOG_LEVEL = "INFO"
+# Clean Terminal Logging & Observability (ADR-003 / SRE Audit Trail)
+LOG_FILE = os.getenv("LEX_LOG_FILE", "logs/crawler.log")
+LOG_LEVEL = os.getenv("LEX_LOG_LEVEL", "INFO")
+LOG_ENCODING = "utf-8"
+LOG_FILE_APPEND = True
 LOG_SCRAPED_ITEMS = False
+
+# Ensure target log directory exists before Scrapy initializes FileHandler
+Path(LOG_FILE).parent.mkdir(parents=True, exist_ok=True)
 
 
 from mutmut.mutation.trampoline import wrap_in_trampoline as _mutmut_mutated, MutantDict
