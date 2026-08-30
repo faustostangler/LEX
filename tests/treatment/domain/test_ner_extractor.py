@@ -186,3 +186,36 @@ class TestDeterministicNerExtractor:
         assert entities["triage_status"] == "UNCLASSIFIED_TRILHA_B"
         assert entities["needs_manual_review"] is True
         assert "Informamos a todos" in entities.get("triage_sample", "")
+
+    def test_extract_unclassified_act_triage_sample_long_paragraph(self) -> None:
+        """Asserts that triage_sample preserves the entire first paragraph if >= 300 chars."""
+        long_para = "A" * 350
+        text = f"{long_para}\n\nSegundo paragrafo que nao deve entrar no sample."
+        entities = DeterministicNerExtractor.extract_entities(text)
+        assert entities["triage_status"] == "UNCLASSIFIED_TRILHA_B"
+        assert entities["triage_sample"] == long_para
+        assert "Segundo paragrafo" not in entities["triage_sample"]
+
+    def test_extract_unclassified_act_triage_sample_short_paragraph_picks_300_chars(self) -> None:
+        """Asserts that triage_sample selects 300 chars if substantive text is short."""
+        first_substantive_para = "Texto substantivo inicial que possui tamanho intermediario."
+        second_para = "B" * 400
+        text = f"{first_substantive_para}\n\n{second_para}"
+        entities = DeterministicNerExtractor.extract_entities(text)
+        assert entities["triage_status"] == "UNCLASSIFIED_TRILHA_B"
+        assert len(entities["triage_sample"]) == 300
+        assert entities["triage_sample"].startswith("Texto substantivo inicial")
+
+    def test_extract_triage_sample_skips_retificacao_header(self) -> None:
+        """Asserts that isolated title headers like RETIFICACAO are skipped."""
+        text = (
+            "RETIFICAÇÃO\n\n"
+            "Na Portaria Inmetro nº 11, de 2 de janeiro de 2025, que aprova o Regulamento Técnico\n"
+            "da Qualidade e os Requisitos de Avaliação da Conformidade para Carrinhos,\n"
+            "publicada no Diário Oficial da União de 10 de fevereiro de 2025, seção 1:\n\n"
+            "Onde se lê: no Anexo I...\nLeia-se: no Anexo II..."
+        )
+        entities = DeterministicNerExtractor.extract_entities(text)
+        assert entities["triage_status"] == "UNCLASSIFIED_TRILHA_B"
+        assert not entities["triage_sample"].startswith("RETIFICAÇÃO")
+        assert entities["triage_sample"].startswith("Na Portaria Inmetro nº 11")

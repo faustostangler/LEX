@@ -311,6 +311,10 @@ class PostgresGazetteRepository(GazetteRepositoryPort):
         )
         return self._session.execute(stmt).first() is not None
 
+    def to_domain_act(self, model: NormativeActModel) -> NormativeAct:
+        """Map ORM model directly to pure domain entity."""
+        return self._map_act_model_to_domain(model)
+
     def _map_act_model_to_domain(self, model: NormativeActModel) -> NormativeAct:
         """Map ORM model to pure domain entity."""
         return NormativeAct(

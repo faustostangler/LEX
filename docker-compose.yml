@@ -3,12 +3,17 @@ services:
     image: postgres:16-alpine
     container_name: lex_postgres
     restart: unless-stopped
+    command: >
+      postgres -c shared_buffers=512MB
+               -c work_mem=16MB
+               -c max_connections=200
+               -c idle_in_transaction_session_timeout=60000
     environment:
       POSTGRES_USER: lex
       POSTGRES_PASSWORD: lex
       POSTGRES_DB: lex
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - lex_postgres_data:/var/lib/postgresql/data
     healthcheck:

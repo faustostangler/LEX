@@ -120,11 +120,40 @@ def test_cli_init_db_routing() -> None:
 def test_cli_treat_routing() -> None:
     """Scenario: 'treat' command calls run_treat function."""
     with patch("lex.cli.run_treat") as mock_run_treat:
-        main(["treat", "--date", "2024-01-15", "--territory", "BR", "--limit", "50"])
+        main(
+            [
+                "treat",
+                "--date",
+                "2024-01-15",
+                "--territory",
+                "BR",
+                "--section",
+                "1",
+                "--limit",
+                "50",
+            ]
+        )
         mock_run_treat.assert_called_once_with(
             date_str="2024-01-15",
             territory="BR",
+            section="1",
             limit=50,
+            force=False,
+            only_failures=False,
+        )
+
+
+def test_cli_treat_force_and_failures_routing() -> None:
+    """Scenario: 'treat --force --only-failures' passes flags correctly to run_treat."""
+    with patch("lex.cli.run_treat") as mock_run_treat:
+        main(["treat", "--force", "--only-failures"])
+        mock_run_treat.assert_called_once_with(
+            date_str=None,
+            territory=None,
+            section=None,
+            limit=None,
+            force=True,
+            only_failures=True,
         )
 
 

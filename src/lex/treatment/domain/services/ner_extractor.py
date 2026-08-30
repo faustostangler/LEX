@@ -101,6 +101,47 @@ def _parse_date(date_str: str) -> str | None:
         return None
 
 
+RE_HEADER_PARAGRAPH = re.compile(
+    r"^(?:RETIFICA[ÇC][ÃA]O|RETIFICA[ÇC][ÕO]ES|AVISO|EXTRATO|EDITAL|DESPACHO|DECIS[ÃA]O|COMUNICADO|"
+    r"DELIBERA[ÇC][ÃA]O|ATO DECLARAT[ÓO]RIO|ORDEM DE SERVI[ÇC]O|PORTARIA(?:-CONJUNTA)?|"
+    r"RESOLU[ÇC][ÃA]O(?:-[A-Z]+)?|DECRETO|LEI|INSTRU[ÇC][ÃA]O NORMATIVA|MINIST[ÉE]RIO|"
+    r"SECRETARIA|GABINETE|DIRETORIA|COORDENA[ÇC][ÃA]O|SUPERINTEND[ÊE]NCIA|PRESID[ÊE]NCIA|"
+    r"CONSELHO|AG[ÊE]NCIA|TRIBUNAL|DEFENSORIA|ADVOCACIA|EMPRESA BRASILEIRA)\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_triage_sample(text: str, min_chars: int = 300) -> str:
+    """Extracts a representative substantive triage sample, skipping title/epígrafe headers.
+
+    Identifies the first real content paragraph (e.g. preâmbulo, ementa, retificação text)
+    and selects whichever is larger: the full substantive paragraph or at least 300 chars.
+    """
+    clean_text = text.strip()
+    if not clean_text:
+        return ""
+
+    raw_paras = [p.strip() for p in clean_text.split("\n\n") if p.strip()]
+    if len(raw_paras) <= 1:
+        raw_paras = [p.strip() for p in clean_text.split("\n") if p.strip()]
+
+    substantive_idx = 0
+    for idx, p in enumerate(raw_paras):
+        is_short_header = len(p) <= 120 and bool(RE_HEADER_PARAGRAPH.match(p))
+        if is_short_header and idx < len(raw_paras) - 1:
+            continue
+        substantive_idx = idx
+        break
+
+    substantive_paras = raw_paras[substantive_idx:]
+    first_substantive_para = substantive_paras[0] if substantive_paras else clean_text
+    remaining_text = "\n\n".join(substantive_paras)
+
+    if len(first_substantive_para) >= min_chars:
+        return first_substantive_para
+    return remaining_text[:min_chars].strip()
+
+
 class DeterministicNerExtractor:
     """High-throughput regex NER entity extractor for Trilha B operational acts."""
 
@@ -241,6 +282,6 @@ class DeterministicNerExtractor:
         else:
             entities["triage_status"] = "UNCLASSIFIED_TRILHA_B"
             entities["needs_manual_review"] = True
-            entities["triage_sample"] = text[:300].strip()
+            entities["triage_sample"] = _extract_triage_sample(text)
 
         return entities

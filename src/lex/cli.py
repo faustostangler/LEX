@@ -116,8 +116,25 @@ def run_crawler(
     process.start()
 
 
-def run_treat(date_str: str | None, territory: str, limit: int) -> None:
-    """Runs the Dual-Track Stage 2 treatment on un-processed normative acts."""
+def run_treat(
+    date_str: str | None = None,
+    territory: str | None = None,
+    section: str | None = None,
+    limit: int | None = None,
+    force: bool = False,
+    only_failures: bool = False,
+) -> None:
+    """Runs the Dual-Track Stage 2 treatment on un-processed normative acts.
+
+    Args:
+        date_str: Optional target gazette date (YYYY-MM-DD).
+        territory: Optional territory code (e.g. BR). If None, processes all territories.
+        section: Optional gazette section (e.g. '1', '2', '3', 'extra').
+            If None, processes all sections.
+        limit: Optional maximum number of acts to process. If None, processes all pending acts.
+        force: If True, re-processes acts even if already treated.
+        only_failures: If True, only processes acts flagged as needing manual review.
+    """
     settings = LexSettings()
     engine = create_engine(str(settings.database_url), echo=False)
     session_factory = sessionmaker(bind=engine)
@@ -127,26 +144,108 @@ def run_treat(date_str: str | None, territory: str, limit: int) -> None:
         treatment_repo = PostgresTreatmentRepository(session=session)
         use_case = ProcessNormativeActUseCase(repository=treatment_repo)
 
-        from sqlalchemy import select
+        from sqlalchemy import or_, select
+        from tqdm import tqdm
 
-        stmt = select(NormativeActModel).where(NormativeActModel.territory_id == territory)
+        from lex.shared_kernel.value_objects import PublicationNature
+
+        stmt = select(NormativeActModel)
+        if territory:
+            stmt = stmt.where(NormativeActModel.territory_id == territory)
+        if section:
+            sec_norm = section.strip().lower()
+            if sec_norm in ["1", "secao_1", "do1", "secao1"]:
+                possible_sections = ["secao_1", "1", "do1", "secao1"]
+            elif sec_norm in ["2", "secao_2", "do2", "secao2"]:
+                possible_sections = ["secao_2", "2", "do2", "secao2"]
+            elif sec_norm in ["3", "secao_3", "do3", "secao3"]:
+                possible_sections = ["secao_3", "3", "do3", "secao3"]
+            elif sec_norm in ["e", "extra", "doe"]:
+                possible_sections = ["extra", "e", "doe"]
+            else:
+                possible_sections = [section]
+            stmt = stmt.where(NormativeActModel.section.in_(possible_sections))
         if date_str:
             target_date = date.fromisoformat(date_str)
             stmt = stmt.where(NormativeActModel.date == target_date)
-        stmt = stmt.limit(limit)
 
-        models = session.scalars(stmt).all()
-        print(f"Processing Stage 2 treatment for {len(models)} acts...")
+        if only_failures:
+            stmt = stmt.where(
+                NormativeActModel.metadata_json["needs_manual_review"].as_boolean().is_(True)
+            )
+        elif not force:
+            is_trilha_a = NormativeActModel.publication_nature.in_(
+                [
+                    PublicationNature.NORMATIVA_ABSTRATA.value,
+                    PublicationNature.REGULATORIA_SETORIAL.value,
+                ]
+            )
+            is_trilha_b = NormativeActModel.publication_nature.in_(
+                [
+                    PublicationNature.CONCRETA_INDIVIDUAL.value,
+                    PublicationNature.PUBLICIDADE_OPERACIONAL.value,
+                ]
+            )
+            stmt = stmt.where(
+                or_(
+                    is_trilha_a & NormativeActModel.structured_content.is_(None),
+                    is_trilha_b & NormativeActModel.metadata_json["triage_status"].is_(None),
+                )
+            )
+
+        CHUNK_SIZE = 500
+
+        total_acts: int | None = limit
+        if total_acts is None:
+            # SOTA-KISS: Instant approximate count from PostgreSQL catalog statistics (0.001s)
+            # completely avoiding slow full-table COUNT(*) over 1.2M rows
+            is_postgres = session.bind is not None and session.bind.dialect.name == "postgresql"
+            if is_postgres and not date_str and not territory and not section and not only_failures:
+                try:
+                    est = session.execute(
+                        text(
+                            "SELECT (reltuples::bigint) FROM pg_class "
+                            "WHERE relname = 'ix_normative_acts_pending_treatment'"
+                        )
+                    ).scalar()
+                    if est is not None and est > 0:
+                        total_acts = int(est)
+                except Exception:
+                    total_acts = None
+
+        if total_acts is not None:
+            print(f"Processing Stage 2 treatment for ~{total_acts} acts...")
+        else:
+            print("Processing Stage 2 treatment (continuous chunk stream)...")
 
         async def _treat_all() -> None:
-            for m in models:
-                domain_act = gazette_repo.get_act_by_id(m.id)
-                if domain_act:
-                    result = await use_case.execute(domain_act)
-                    print(
-                        f"Treated act {domain_act.title} [{result.track}] "
-                        f"with {result.mutations_extracted} mutations."
-                    )
+            processed = 0
+            with tqdm(total=total_acts, desc="Stage 2 Treatment", unit="act") as pbar:
+                while True:
+                    current_chunk_size = CHUNK_SIZE
+                    if limit is not None:
+                        remaining = limit - processed
+                        if remaining <= 0:
+                            break
+                        current_chunk_size = min(CHUNK_SIZE, remaining)
+
+                    chunk_stmt = stmt.limit(current_chunk_size)
+                    models = session.scalars(chunk_stmt).all()
+                    if not models:
+                        break
+
+                    for m in models:
+                        domain_act = gazette_repo.to_domain_act(m)
+                        result = await use_case.execute(domain_act)
+                        processed += 1
+                        pbar.set_postfix(
+                            track=result.track,
+                            muts=result.mutations_extracted,
+                        )
+                        pbar.update(1)
+
+            if processed == 0:
+                print("No pending acts found for Stage 2 treatment.")
 
         anyio.run(_treat_all)
         print("Stage 2 treatment completed successfully.")
@@ -317,10 +416,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     treat_parser.add_argument("--date", "-d", help="Target gazette date (YYYY-MM-DD)", default=None)
     treat_parser.add_argument(
-        "--territory", "-t", default="BR", help="Territory code (default: BR)"
+        "--territory", "-t", default=None, help="Territory code (default: all territories)"
     )
     treat_parser.add_argument(
-        "--limit", type=int, default=100, help="Maximum acts to process (default: 100)"
+        "--section",
+        "-s",
+        default=None,
+        help="Gazette section (e.g. 1, 2, 3, extra; default: all sections)",
+    )
+    treat_parser.add_argument(
+        "--limit", type=int, default=None, help="Maximum acts to process (default: all pending)"
+    )
+    treat_parser.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Force re-treatment of acts even if already processed.",
+    )
+    treat_parser.add_argument(
+        "--only-failures",
+        action="store_true",
+        default=False,
+        help="Only process/re-process acts flagged as needing manual review.",
     )
 
     # compile sub-command
@@ -391,7 +508,10 @@ def main(args: list[str] | None = None) -> None:
         run_treat(
             date_str=parsed_args.date,
             territory=parsed_args.territory,
+            section=parsed_args.section,
             limit=parsed_args.limit,
+            force=parsed_args.force,
+            only_failures=parsed_args.only_failures,
         )
     elif parsed_args.command == "compile":
         run_compile(identifier=parsed_args.identifier)
