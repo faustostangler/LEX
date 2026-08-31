@@ -135,7 +135,8 @@ Before proceeding past the ADR phase, verify the following compliance checks
 - [ ] Domain models are separate from persistence models — no ORM in Domain (see §3)
 - [ ] Test strategy defined (boundary conditions, mocks, integration points, LLM Evals)
 - [ ] Observability plan included (metrics, logs, traces, Langfuse)
-- [ ] LGPD/Security implications assessed
+- [ ] Threat Modeling & MITRE CWE-1000 compliance assessed (Input Validation, AuthZ/AuthN, Deserialization, Insecure State, Error Handling)
+- [ ] LGPD/PII & Security implications assessed (redaction, secrets isolation)
 - [ ] Ubiquitous Language terms added to `docs/GLOSSARY.md`
 - [ ] Alternatives considered and rejection rationale documented
 - [ ] **Cross-Context**: If the feature crosses bounded context boundaries, the
@@ -719,11 +720,12 @@ Track business success: **Data Quality**, **Business Lifecycle**,
 
 ## 8. Integration & Security
 
-- **Anti-Corruption Layers**: Always abstract external I/O through Adapters
-- **Consumer-Driven Contracts (CDC)**: Prove service interactions with Pact before deployment
-- **Snyk**: Real-time security scanning for third-party vulnerabilities
-- **LGPD Compliance**: Redact PII and SQL queries in all telemetry
-- **API Versioning**: Strategic versioning for robust interface compatibility
+- **MITRE CWE-1000 Taxonomy**: Standard baseline for software weakness categorization, architectural threat modeling, and defensive engineering across all layers.
+- **Anti-Corruption Layers**: Always abstract external I/O through Adapters to prevent deserialization vulnerabilities and untrusted data pollution (CWE-502, CWE-20).
+- **Consumer-Driven Contracts (CDC)**: Prove service interactions with Pact before deployment.
+- **Snyk & SAST**: Real-time security and dependency vulnerability scanning (CWE-1395).
+- **LGPD/PII Compliance**: Redact PII and SQL queries in all telemetry and logs (CWE-200, CWE-359).
+- **API Versioning**: Strategic versioning for robust interface compatibility.
 
 ---
 

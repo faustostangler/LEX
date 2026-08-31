@@ -36,7 +36,10 @@ The drafted ADR must reside under `docs/adr/ADR-NNN-short-title.md` (following t
 3. **Consequences**: List positive, negative, and neutral trade-offs.
 4. **Alternatives Considered**: At least two options with pros, cons, and rejection reasons.
 5. **Domain Model Impact**: Identify Value Objects, Entities, and Ports. Verify Value Objects are used for business concepts (no Primitive Obsession) and Entities validate invariants at construction.
-6. **Cross-Context State Strategy**: (Mandatory for multi-context workflows):
+6. **Threat Modeling & CWE-1000 Weakness Assessment**:
+   - Assess attack surfaces and trust boundaries against the **MITRE CWE-1000 (Research Concepts)** taxonomy.
+   - Explicitly evaluate: Input Validation (CWE-20), Access Control/Privileges (CWE-285), Deserialization/Untrusted Data (CWE-502), State & Concurrency (CWE-362), Secrets & PII Exposure (CWE-200/359), and Error Handling (CWE-755).
+7. **Cross-Context State Strategy**: (Mandatory for multi-context workflows):
    - **Boundary Violations Check**: Reject immediately if a module reads/writes another module's persistence.
    - **Consistency Model**: Eventual Consistency is the default for cross-module flows. Strong Consistency is strictly restricted to single-module transactions.
    - **Failure Modes & Compensation (Saga)**: Define compensation events, Saga style (Choreography or Orchestration), maximum delay (SLA), and idempotency keys.
@@ -93,6 +96,7 @@ For each output dimension of the LLM-influenced pipeline step, specify:
 - [ ] Do Domain models avoid Primitive Obsession (using Value Objects)?
 - [ ] Are Entities always valid at construction (no deferred validation)?
 - [ ] Are Domain entities clean of ORM/persistence definitions?
+- [ ] Has Threat Modeling against MITRE CWE-1000 categories been assessed and documented?
 - [ ] Does any module read/write another module's persistence? (If yes, reject immediately)
 - [ ] Is the consistency model declared (Eventual vs Strong)?
 - [ ] Are Saga compensation events, SLA delay, and idempotency keys documented?

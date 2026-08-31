@@ -31,6 +31,9 @@ DEFAULT_REQUEST_HEADERS = {
     "Upgrade-Insecure-Requests": "1",
 }
 
+# Official Gazette crawling operates under the Brazilian Freedom of Information Law
+# (Lei de Acesso à Informação - Lei nº 12.527/2011, art. 8º, § 2º), which mandates public,
+# unrestricted, machine-readable dissemination of all official regulatory and legislative acts.
 ROBOTSTXT_OBEY = False
 
 # Default Concurrency & Latency Controls

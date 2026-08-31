@@ -26,16 +26,19 @@ Before writing any specification, you MUST:
 Derive test specifications directly from the approved ADR:
 
 1. **Acceptance Criteria**: What behaviors must be true for the decision to be correctly implemented? Each consequence in the ADR maps to one or more test cases.
-2. **Boundary Conditions**: What edge cases does the decision introduce? What invariants must hold? Include Value Object validation boundaries (e.g. string lengths, range clamps like `[0.0, 1.0]`).
-3. **Entity Invariant Tests**: Verify that construction of any Entity or Value Object with invalid data raises a domain validation exception.
-4. **Test Strategy Classification**: Categorize test requirements as:
+2. **Boundary Conditions & Value Invariants**: What edge cases does the decision introduce? What invariants must hold? Include Value Object validation boundaries (e.g. string lengths, range clamps like `[0.0, 1.0]`).
+3. **Security Invariant & Negative Testing (MITRE CWE-1000)**:
+   - Formulate negative test scenarios designed to probe relevant CWE weaknesses identified in the ADR.
+   - Specify assertions against: malformed/oversized input payloads (CWE-20), unauthorized state mutations (CWE-285), injection strings/characters (CWE-89/116), unsafe deserialization (CWE-502), and sensitive data leakage in error messages (CWE-209/359).
+4. **Entity Invariant Tests**: Verify that construction of any Entity or Value Object with invalid data raises a domain validation exception.
+5. **Test Strategy Classification**: Categorize test requirements as:
    - **Unit**: Domain logic, pure functions.
    - **Integration**: Infrastructure adapters, database ports.
    - **Contract**: CDC verification (Pact).
    - **E2E**: Orchestration or presentation flows.
    - **LLM Evals**: Non-deterministic output scoring (see §2.1 below).
    Define what to mock (all external dependencies in unit tests) and what to test through real adapters.
-5. **Regression Anchors** (for bug fixes): Document the exact failing scenario that must be reproduced to prevent regressions.
+6. **Regression Anchors** (for bug fixes): Document the exact failing scenario that must be reproduced to prevent regressions.
 
 Specs are human-readable acceptance criteria, not test code. They act as the contract between the ADR and implementation.
 
@@ -102,6 +105,7 @@ Each line is one evaluation example. The `expected` field describes the qualitat
 - [ ] Have I re-read the approved ADR from disk before writing specs?
 - [ ] Are acceptance criteria derived directly from the ADR consequences?
 - [ ] Are boundary conditions and Value Object invariants identified?
+- [ ] Are Security Invariant and negative test cases against MITRE CWE-1000 weaknesses specified?
 - [ ] Are Entity invariant construction tests explicitly specified?
 - [ ] Is the test strategy classified (unit, integration, contract, E2E, LLM Evals)?
 - [ ] For bugs, is there a regression anchor specified to reproduce the failure?

@@ -4,6 +4,7 @@ Enforces fail-fast validation via pydantic-settings on startup, ensuring that
 missing database DSNs or invalid concurrency parameters halt execution immediately.
 """
 
+from functools import lru_cache
 from typing import Self
 
 from pydantic import Field, PostgresDsn, model_validator
@@ -109,7 +110,7 @@ class LexSettings(BaseSettings):
 
     # API & Web Security
     cors_allowed_origins: list[str] = Field(
-        default_factory=lambda: ["*"],
+        default_factory=lambda: ["http://localhost:3000"],
         description="Allowed origins for FastAPI CORS headers",
     )
 
@@ -121,12 +122,7 @@ class LexSettings(BaseSettings):
         return self
 
 
-_SETTINGS_INSTANCE: LexSettings | None = None
-
-
+@lru_cache(maxsize=1)
 def get_settings() -> LexSettings:
     """Returns the cached singleton LexSettings instance, failing fast on invalid env."""
-    global _SETTINGS_INSTANCE
-    if _SETTINGS_INSTANCE is None:
-        _SETTINGS_INSTANCE = LexSettings()
-    return _SETTINGS_INSTANCE
+    return LexSettings()
