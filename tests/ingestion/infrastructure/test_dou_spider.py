@@ -338,3 +338,94 @@ class TestFederalDouSpider:
         spider.closed(reason="finished")
         # Give asyncio loop a moment if needed
         assert spider._http_client is not None
+
+    def test_parse_act_type_and_number_various_typologies(self) -> None:
+        """Scenario: Extract typology, number, and year across multiple title formats."""
+        test_cases = [
+            (
+                "PORTARIA Nº 1.234, DE 15 DE JANEIRO DE 2024",
+                "PORTARIA",
+                "1.234",
+                2024,
+            ),
+            (
+                "PORTARIA INTERMINISTERIAL Nº 12, DE 3 DE FEVEREIRO DE 2023",
+                "PORTARIA INTERMINISTERIAL",
+                "12",
+                2023,
+            ),
+            (
+                "LEI COMPLEMENTAR Nº 195, DE 8 DE JULHO DE 2022",
+                "LEI COMPLEMENTAR",
+                "195",
+                2022,
+            ),
+            (
+                "MEDIDA PROVISÓRIA Nº 1.150, DE 23 DE DEZEMBRO DE 2022",
+                "MEDIDA PROVISÓRIA",
+                "1.150",
+                2022,
+            ),
+            (
+                "DECRETO Nº 11.000/2022",
+                "DECRETO",
+                "11.000/2022",
+                2024,  # Fallback to target_year when not in date tail
+            ),
+            (
+                "INSTRUÇÃO NORMATIVA DGRH Nº 003/2021",
+                "INSTRUÇÃO NORMATIVA DGRH",
+                "003/2021",
+                2024,
+            ),
+            (
+                "RESOLUÇÃO Nº 45-A, DE 10 DE MAIO DE 2023",
+                "RESOLUÇÃO",
+                "45-A",
+                2023,
+            ),
+            (
+                "PORTARIA N. 100, DE 2024",
+                "PORTARIA",
+                "100",
+                2024,
+            ),
+            (
+                "DESPACHO DO PRESIDENTE DA REPÚBLICA",
+                "DESPACHO",
+                None,
+                2024,
+            ),
+        ]
+
+        for title, exp_type, exp_num, exp_year in test_cases:
+            act_type, num, year = FederalDouSpider._parse_act_type_and_number(
+                title=title,
+                default_type="OUTROS",
+                target_year=2024,
+            )
+            assert act_type == exp_type, f"Expected type {exp_type}, got {act_type} for '{title}'"
+            assert num == exp_num, f"Expected num {exp_num}, got {num} for '{title}'"
+            assert year == exp_year, f"Expected year {exp_year}, got {year} for '{title}'"
+
+    def test_act_typology_pattern_redos_safety(self) -> None:
+        """Scenario: ACT_TYPOLOGY_PATTERN evaluates in linear time O(N) (CWE-1333)."""
+        import time
+
+        adversarial_payloads = [
+            "PORTARIA " + "N " * 500 + "X",
+            "PORTARIA Nº " + "9" * 5000 + " DE 15 DE JANEIRO DE NÃO ANO",
+            "A " * 500 + "Nº 123",
+            "PORTARIA Nº 123 " + "DE JANEIRO " * 200,
+            "LEI " * 200 + "Nº " + "0" * 1000,
+        ]
+
+        for payload in adversarial_payloads:
+            t0 = time.perf_counter()
+            FederalDouSpider._parse_act_type_and_number(
+                title=payload,
+                default_type="OUTROS",
+                target_year=2024,
+            )
+            duration = time.perf_counter() - t0
+            assert duration < 0.05, f"ReDoS detected! Evaluation took {duration:.4f}s"

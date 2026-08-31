@@ -80,11 +80,15 @@ SECTION_CODE_MAP: dict[str, str] = {
     "secao_3": "3",
 }
 
+# Hoisted compiled regex constants (ReDoS safe - CWE-1333 mitigation per ADR-009 §4.9)
 SCRIPT_PARAMS_PATTERN: re.Pattern[str] = re.compile(
     r'<script\b[^>]*\bid=["\']params["\'][^>]*>(.*?)</script>', re.DOTALL
 )
 ACT_TYPOLOGY_PATTERN: re.Pattern[str] = re.compile(
-    r"^([A-ZÁÉÍÓÚÂÊÔÃÕÇ\s\/\-]+?)(?:\s+(?:[Nn][º°o\.]\s*))([0-9\.\-\/]+)?(?:.*?(?:DE\s+\d+\s+DE\s+[A-Za-zçãéíóúáâêô]+\s+DE\s+(\d{4})))?",
+    r"^([A-Za-zÀ-ÖØ-öø-ÿ0-9\/\-\.]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ0-9\/\-\.]+){0,10})"
+    r"\s+(?:N(?:[º°o]\.?|\.º?|\.)|N[º°o\.]|NUMERO|NÚMERO)\s*"
+    r"([0-9A-Za-z\.\-\/]+)"
+    r"(?:[,\s/]+(?:DE\s+\d{1,2}\s+DE\s+[A-Za-zçãéíóúáâêôÀ-ÿ]+\s+DE\s+|DE\s+)?(\d{4}))?",
     re.IGNORECASE,
 )
 
@@ -383,7 +387,7 @@ class FederalDouSpider(BaseGazetteSpider):
         if not title:
             return default_type.upper(), None, target_year
 
-        match = ACT_TYPOLOGY_PATTERN.search(title)
+        match = ACT_TYPOLOGY_PATTERN.search(title.strip())
         if match:
             act_type = match.group(1).strip().upper()
             num = match.group(2).strip() if match.group(2) else None
