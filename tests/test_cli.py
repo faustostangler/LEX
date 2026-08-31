@@ -5,6 +5,8 @@ Verifies default 'crawl' action, spider routing, --force flag, date options, and
 
 from unittest.mock import patch
 
+import pytest
+
 from lex.cli import build_parser, main, parse_cli_args
 
 
@@ -182,3 +184,62 @@ def test_cli_query_routing() -> None:
             as_of="2020-01-01",
             output_format="html",
         )
+
+
+def test_run_treat_keyset_pagination(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Scenario: run_treat executes streaming keyset cursor pagination."""
+    import uuid
+    from datetime import UTC, date, datetime
+    from unittest.mock import AsyncMock, MagicMock
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from lex.cli import run_treat
+    from lex.ingestion.infrastructure.persistence.models import Base, NormativeActModel
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine)
+
+    # Insert 3 test acts
+    with session_factory() as session:
+        edition_id = uuid.uuid4()
+        for i in range(3):
+            act = NormativeActModel(
+                id=uuid.uuid4(),
+                edition_id=edition_id,
+                territory_id="BR",
+                date=date(2024, 1, 2),
+                section="secao_1",
+                edition_number="1",
+                is_extra_edition=False,
+                act_type="LEI",
+                title=f"Lei {i}",
+                canonical_urn=f"urn:lex:br:federal:lei:2024;{i}",
+                publication_nature="normativa_abstrata",
+                raw_content=f"Art. 1 Texto {i}",
+                content_sha256=f"{i}" * 64,
+                char_count=20,
+                source_url=f"https://in.gov.br/{i}",
+                scraped_at=datetime.now(UTC),
+            )
+            session.add(act)
+        session.commit()
+
+    monkeypatch.setattr("lex.cli.create_engine", lambda *args, **kwargs: engine)
+
+    with patch("lex.cli.ProcessNormativeActUseCase") as mock_use_case_cls:
+        mock_instance = MagicMock()
+        mock_instance.execute = AsyncMock(
+            return_value=MagicMock(track="A", mutations_extracted=0)
+        )
+        mock_use_case_cls.return_value = mock_instance
+
+        run_treat(force=True, limit=2)
+        assert mock_instance.execute.call_count == 2

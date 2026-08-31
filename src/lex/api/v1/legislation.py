@@ -4,6 +4,7 @@ Provides O(1) instantaneous access to compiled legislation, Stub handling,
 and on-demand time-travel queries.
 """
 
+from collections.abc import Generator
 from datetime import date
 from typing import Annotated, Any
 from uuid import UUID
@@ -25,7 +26,7 @@ from lex.treatment.domain.entities import ActAst
 router = APIRouter(prefix="/legislation", tags=["Legislation"])
 
 
-def get_db_session() -> Session:
+def get_db_session() -> Generator[Session, None, None]:
     """Dependency placeholder replaced during application startup or testing."""
     raise NotImplementedError("Database session dependency must be overridden.")
 

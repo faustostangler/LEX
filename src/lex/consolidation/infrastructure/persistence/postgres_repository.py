@@ -54,8 +54,12 @@ class PostgresConsolidationRepository(ConsolidationRepositoryPort):
             confidence_score=mutation.confidence_score,
             mutation_sha256=mutation.mutation_sha256.hex_digest,
         )
-        self._session.add(model)
-        self._session.commit()
+        try:
+            self._session.add(model)
+            self._session.commit()
+        except Exception:
+            self._session.rollback()
+            raise
 
     async def get_mutations_for_act(self, target_act_id: UUID) -> list[NormativeActMutation]:
         """Fetches all mutations targeting a given statute, ordered chronologically."""
@@ -91,33 +95,37 @@ class PostgresConsolidationRepository(ConsolidationRepositoryPort):
 
     async def save_compiled_act(self, compiled_act: CompiledNormativeAct) -> None:
         """Upserts a materialized compiled act projection in the read model."""
-        existing = self._session.get(CompiledNormativeActModel, compiled_act.act_id)
-        if existing:
-            existing.compiled_version_hash = compiled_act.compiled_version_hash
-            existing.total_mutations_applied = compiled_act.total_mutations_applied
-            existing.last_mutation_effective_date = compiled_act.last_mutation_effective_date
-            existing.compiled_ast = compiled_act.compiled_ast.to_dict()
-            existing.compiled_html = compiled_act.compiled_html
-            existing.compiled_markdown = compiled_act.compiled_markdown
-            existing.active_articles_count = compiled_act.active_articles_count
-            existing.revoked_articles_count = compiled_act.revoked_articles_count
-            existing.last_compiled_at = compiled_act.last_compiled_at
-            existing.updated_at = datetime.now(UTC)
-        else:
-            model = CompiledNormativeActModel(
-                act_id=compiled_act.act_id,
-                compiled_version_hash=compiled_act.compiled_version_hash,
-                total_mutations_applied=compiled_act.total_mutations_applied,
-                last_mutation_effective_date=compiled_act.last_mutation_effective_date,
-                compiled_ast=compiled_act.compiled_ast.to_dict(),
-                compiled_html=compiled_act.compiled_html,
-                compiled_markdown=compiled_act.compiled_markdown,
-                active_articles_count=compiled_act.active_articles_count,
-                revoked_articles_count=compiled_act.revoked_articles_count,
-                last_compiled_at=compiled_act.last_compiled_at,
-            )
-            self._session.add(model)
-        self._session.commit()
+        try:
+            existing = self._session.get(CompiledNormativeActModel, compiled_act.act_id)
+            if existing:
+                existing.compiled_version_hash = compiled_act.compiled_version_hash
+                existing.total_mutations_applied = compiled_act.total_mutations_applied
+                existing.last_mutation_effective_date = compiled_act.last_mutation_effective_date
+                existing.compiled_ast = compiled_act.compiled_ast.to_dict()
+                existing.compiled_html = compiled_act.compiled_html
+                existing.compiled_markdown = compiled_act.compiled_markdown
+                existing.active_articles_count = compiled_act.active_articles_count
+                existing.revoked_articles_count = compiled_act.revoked_articles_count
+                existing.last_compiled_at = compiled_act.last_compiled_at
+                existing.updated_at = datetime.now(UTC)
+            else:
+                model = CompiledNormativeActModel(
+                    act_id=compiled_act.act_id,
+                    compiled_version_hash=compiled_act.compiled_version_hash,
+                    total_mutations_applied=compiled_act.total_mutations_applied,
+                    last_mutation_effective_date=compiled_act.last_mutation_effective_date,
+                    compiled_ast=compiled_act.compiled_ast.to_dict(),
+                    compiled_html=compiled_act.compiled_html,
+                    compiled_markdown=compiled_act.compiled_markdown,
+                    active_articles_count=compiled_act.active_articles_count,
+                    revoked_articles_count=compiled_act.revoked_articles_count,
+                    last_compiled_at=compiled_act.last_compiled_at,
+                )
+                self._session.add(model)
+            self._session.commit()
+        except Exception:
+            self._session.rollback()
+            raise
 
     async def get_compiled_act(self, act_id: UUID) -> CompiledNormativeAct | None:
         """Retrieves the current compiled act projection by statute UUID."""
@@ -141,49 +149,68 @@ class PostgresConsolidationRepository(ConsolidationRepositoryPort):
 
     async def get_compiled_act_by_urn(self, canonical_urn: str) -> CompiledNormativeAct | None:
         """Retrieves the current compiled act projection by LexML URN."""
-        stmt = select(CompiledNormativeActModel)
-        rows = self._session.scalars(stmt).all()
-        for r in rows:
-            if r.compiled_ast.get("canonical_urn") == canonical_urn:
-                ast = ActAst.from_dict(r.compiled_ast)
-                return CompiledNormativeAct(
-                    act_id=r.act_id,
-                    compiled_version_hash=r.compiled_version_hash,
-                    total_mutations_applied=r.total_mutations_applied,
-                    last_mutation_effective_date=r.last_mutation_effective_date,
-                    compiled_ast=ast,
-                    compiled_html=r.compiled_html,
-                    compiled_markdown=r.compiled_markdown,
-                    active_articles_count=r.active_articles_count,
-                    revoked_articles_count=r.revoked_articles_count,
-                    last_compiled_at=r.last_compiled_at,
-                )
-        return None
+        bind = self._session.get_bind()
+        is_postgres = bind is not None and bind.dialect.name == "postgresql"
+
+        row = None
+        if is_postgres:
+            stmt = select(CompiledNormativeActModel).where(
+                CompiledNormativeActModel.compiled_ast["canonical_urn"].astext == canonical_urn
+            )
+            row = self._session.scalars(stmt).first()
+        else:
+            stmt = select(CompiledNormativeActModel)
+            rows = self._session.scalars(stmt).all()
+            for r in rows:
+                if r.compiled_ast.get("canonical_urn") == canonical_urn:
+                    row = r
+                    break
+
+        if not row:
+            return None
+
+        ast = ActAst.from_dict(row.compiled_ast)
+        return CompiledNormativeAct(
+            act_id=row.act_id,
+            compiled_version_hash=row.compiled_version_hash,
+            total_mutations_applied=row.total_mutations_applied,
+            last_mutation_effective_date=row.last_mutation_effective_date,
+            compiled_ast=ast,
+            compiled_html=row.compiled_html,
+            compiled_markdown=row.compiled_markdown,
+            active_articles_count=row.active_articles_count,
+            revoked_articles_count=row.revoked_articles_count,
+            last_compiled_at=row.last_compiled_at,
+        )
 
     async def enqueue_backfill_task(self, task: LegislationBackfillTask) -> None:
         """Enqueues or increments citation count of a missing statute in the JIT queue."""
-        stmt = select(LegislationBackfillQueueModel).where(
-            LegislationBackfillQueueModel.canonical_urn == task.canonical_urn.value
-        )
-        existing = self._session.scalars(stmt).first()
-        if existing:
-            existing.citation_count += 1
-            existing.last_requested_at = datetime.now(UTC)
-        else:
-            task_id = task.id or uuid.uuid4()
-            model = LegislationBackfillQueueModel(
-                id=task_id,
-                canonical_urn=task.canonical_urn.value,
-                territory_id=task.territory_id,
-                act_type=task.act_type,
-                act_number=task.act_number,
-                act_year=task.act_year,
-                citation_count=task.citation_count,
-                status=task.status,
-                last_requested_at=task.last_requested_at,
+        try:
+            stmt = select(LegislationBackfillQueueModel).where(
+                LegislationBackfillQueueModel.canonical_urn == task.canonical_urn.value
             )
-            self._session.add(model)
-        self._session.commit()
+            existing = self._session.scalars(stmt).first()
+            if existing:
+                existing.citation_count += 1
+                existing.last_requested_at = datetime.now(UTC)
+            else:
+                task_id = task.id or uuid.uuid4()
+                model = LegislationBackfillQueueModel(
+                    id=task_id,
+                    canonical_urn=task.canonical_urn.value,
+                    territory_id=task.territory_id,
+                    act_type=task.act_type,
+                    act_number=task.act_number,
+                    act_year=task.act_year,
+                    citation_count=task.citation_count,
+                    status=task.status,
+                    last_requested_at=task.last_requested_at,
+                )
+                self._session.add(model)
+            self._session.commit()
+        except Exception:
+            self._session.rollback()
+            raise
 
     async def get_backfill_queue(self, limit: int = 20) -> list[LegislationBackfillTask]:
         """Lists highest priority un-resolved backfill tasks."""

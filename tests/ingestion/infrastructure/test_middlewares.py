@@ -95,3 +95,6 @@ class TestDecorrelatedJitterRetryMiddleware:
         assert isinstance(retried_req, Request)
         assert retried_req.meta.get("retry_times") == 1
         assert "retry_delay" in retried_req.meta
+        assert "download_delay" in retried_req.meta
+        assert retried_req.meta["download_delay"] == retried_req.meta["retry_delay"]
+        assert retried_req.dont_filter is True

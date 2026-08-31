@@ -9,7 +9,7 @@ import uuid
 from typing import Any
 
 from scrapy.crawler import Crawler
-from sqlalchemy import create_engine
+from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from lex.ingestion.application.ports import GazetteRepositoryPort
@@ -26,7 +26,7 @@ from lex.ingestion.infrastructure.dto import (
 from lex.ingestion.infrastructure.persistence.postgres_repository import (
     PostgresGazetteRepository,
 )
-from lex.shared_kernel.config import LexSettings
+from lex.shared_kernel.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +41,13 @@ class GazetteIngestionPipeline:
         repository: GazetteRepositoryPort | None = None,
         mapper: GazetteMapper | None = None,
         session: Session | None = None,
+        engine: Engine | None = None,
         batch_size: int = DEFAULT_PIPELINE_BATCH_SIZE,
     ) -> None:
         self._repository = repository
         self._mapper = mapper
         self._session = session
+        self._engine = engine
         self._batch_size = batch_size
         self._act_buffer: list[NormativeAct] = []
         # Cache mapped edition UUIDs: key -> edition_id
@@ -54,7 +56,7 @@ class GazetteIngestionPipeline:
     @classmethod
     def from_crawler(cls, crawler: Crawler) -> "GazetteIngestionPipeline":
         """Instantiate pipeline from Scrapy crawler settings."""
-        settings = LexSettings()
+        settings = get_settings()
         engine = create_engine(str(settings.database_url), pool_pre_ping=True)
         session_factory = sessionmaker(bind=engine)
         session = session_factory()
@@ -63,7 +65,7 @@ class GazetteIngestionPipeline:
         mapper = GazetteMapper(text_extractor=extractor)
         repository = PostgresGazetteRepository(session=session)
 
-        return cls(repository=repository, mapper=mapper, session=session)
+        return cls(repository=repository, mapper=mapper, session=session, engine=engine)
 
     def _flush_acts(self) -> None:
         """Persist buffered normative acts in a single bulk transaction and clear buffer."""
@@ -93,8 +95,8 @@ class GazetteIngestionPipeline:
                 cache_key = (
                     item.territory_code,
                     str(edition.date.value),
-                    str(item.section or ""),
-                    str(item.edition_number or ""),
+                    item.section or "",
+                    item.edition_number or "",
                     item.is_extra_edition,
                 )
                 self._edition_id_cache[cache_key] = persisted_id
@@ -105,8 +107,8 @@ class GazetteIngestionPipeline:
             cache_key = (
                 item.territory_code,
                 str(item.date_obj),
-                str(item.section or ""),
-                str(item.edition_number or ""),
+                item.section or "",
+                item.edition_number or "",
                 item.is_extra_edition,
             )
             cached_id = self._edition_id_cache.get(cache_key)
@@ -155,3 +157,5 @@ class GazetteIngestionPipeline:
         self._flush_acts()
         if self._session is not None:
             self._session.close()
+        if self._engine is not None:
+            self._engine.dispose()

@@ -34,6 +34,7 @@ class RawNormativeActPayload:
     territory_code: str
     source_url: str
     raw_content: str = field(repr=False)
+    tier: str = "federal"
     title: str = ""
     act_type: str = "OUTROS"
     date_obj: date = field(default_factory=date.today)

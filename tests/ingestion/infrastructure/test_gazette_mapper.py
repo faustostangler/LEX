@@ -498,3 +498,38 @@ class TestGazetteMapper:
 
         with pytest.raises(InvalidTerritoryCodeError):
             mapper.to_domain(payload)
+
+    def test_generate_canonical_urn_multi_tier_support(self) -> None:
+        """Scenario: generate_canonical_urn formats proper URN tier segment."""
+        # Federal
+        urn_fed = generate_canonical_urn(
+            territory_code="BR",
+            act_type="LEI",
+            act_number="14.133",
+            act_year=2021,
+            act_date=date(2021, 4, 1),
+            tier="federal",
+        )
+        assert urn_fed == "urn:lex:br:federal:lei:2021;14.133"
+
+        # State (SP)
+        urn_state = generate_canonical_urn(
+            territory_code="SP",
+            act_type="DECRETO",
+            act_number="65.500",
+            act_year=2021,
+            act_date=date(2021, 1, 15),
+            tier="state",
+        )
+        assert urn_state == "urn:lex:sp:estadual:decreto:2021;65.500"
+
+        # Municipal (São Paulo - IBGE 3550308)
+        urn_mun = generate_canonical_urn(
+            territory_code="3550308",
+            act_type="PORTARIA",
+            act_number="123",
+            act_year=2023,
+            act_date=date(2023, 5, 10),
+            tier="municipal",
+        )
+        assert urn_mun == "urn:lex:3550308:municipal:portaria:2023;123"

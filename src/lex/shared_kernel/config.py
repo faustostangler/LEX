@@ -107,6 +107,12 @@ class LexSettings(BaseSettings):
         description="Langfuse telemetry endpoint",
     )
 
+    # API & Web Security
+    cors_allowed_origins: list[str] = Field(
+        default_factory=lambda: ["*"],
+        description="Allowed origins for FastAPI CORS headers",
+    )
+
     @model_validator(mode="after")
     def _validate_mandatory_settings(self) -> Self:
         """Enforces that database_url is provided via environment or settings."""

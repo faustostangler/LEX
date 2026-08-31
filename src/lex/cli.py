@@ -28,7 +28,7 @@ from lex.ingestion.infrastructure.persistence.models import Base, NormativeActMo
 from lex.ingestion.infrastructure.persistence.postgres_repository import (
     PostgresGazetteRepository,
 )
-from lex.shared_kernel.config import LexSettings
+from lex.shared_kernel.config import get_settings
 from lex.treatment.application.use_cases import ProcessNormativeActUseCase
 from lex.treatment.domain.entities import ActAst
 from lex.treatment.infrastructure.persistence.postgres_repository import (
@@ -45,7 +45,7 @@ DEFAULT_SPIDER_NAME: str = "all"
 
 def init_db() -> None:
     """Initialize PostgreSQL schema and configure LZ4 TOAST compression on normative_acts."""
-    settings = LexSettings()
+    settings = get_settings()
     print(f"Connecting to database: {settings.database_url}...")
     engine = create_engine(str(settings.database_url), echo=False)
 
@@ -148,7 +148,7 @@ def run_treat(
         force: If True, re-processes acts even if already treated.
         only_failures: If True, only processes acts flagged as needing manual review.
     """
-    settings = LexSettings()
+    settings = get_settings()
     engine = create_engine(str(settings.database_url), echo=False)
     session_factory = sessionmaker(bind=engine)
 
@@ -156,6 +156,8 @@ def run_treat(
         gazette_repo = PostgresGazetteRepository(session=session)
         treatment_repo = PostgresTreatmentRepository(session=session)
         use_case = ProcessNormativeActUseCase(repository=treatment_repo)
+
+        from uuid import UUID
 
         from sqlalchemy import or_, select
         from tqdm import tqdm
@@ -233,6 +235,7 @@ def run_treat(
 
         async def _treat_all() -> None:
             processed = 0
+            last_seen_id: UUID | None = None
             with tqdm(total=total_acts, desc="Stage 2 Treatment", unit="act") as pbar:
                 while True:
                     current_chunk_size = CHUNK_SIZE
@@ -242,12 +245,19 @@ def run_treat(
                             break
                         current_chunk_size = min(CHUNK_SIZE, remaining)
 
-                    chunk_stmt = stmt.limit(current_chunk_size)
+                    chunk_stmt = stmt
+                    if last_seen_id is not None:
+                        chunk_stmt = chunk_stmt.where(NormativeActModel.id > last_seen_id)
+                    chunk_stmt = chunk_stmt.order_by(NormativeActModel.id.asc()).limit(
+                        current_chunk_size
+                    )
+
                     models = session.scalars(chunk_stmt).all()
                     if not models:
                         break
 
                     for m in models:
+                        last_seen_id = m.id
                         domain_act = gazette_repo.to_domain_act(m)
                         result = await use_case.execute(domain_act)
                         processed += 1
@@ -266,7 +276,7 @@ def run_treat(
 
 def run_compile(identifier: str) -> None:
     """Compiles a statute's base AST and accumulated mutations into a read model."""
-    settings = LexSettings()
+    settings = get_settings()
     engine = create_engine(str(settings.database_url), echo=False)
     session_factory = sessionmaker(bind=engine)
 
@@ -314,7 +324,7 @@ def run_compile(identifier: str) -> None:
 
 def run_query(identifier: str, as_of: str | None, output_format: str) -> None:
     """Queries compiled legislation text or performs on-demand time travel."""
-    settings = LexSettings()
+    settings = get_settings()
     engine = create_engine(str(settings.database_url), echo=False)
     session_factory = sessionmaker(bind=engine)
 

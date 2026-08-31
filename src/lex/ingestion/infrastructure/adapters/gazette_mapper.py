@@ -471,19 +471,29 @@ def generate_canonical_urn(
     act_year: int | None,
     act_date: date,
     content_hash: str | None = None,
+    tier: str = "federal",
 ) -> str:
     """Generate a standardized LexML/FRBR Canonical URN for a normative act."""
     clean_territory = territory_code.strip().lower()
+    clean_tier = tier.strip().lower()
+    if clean_tier in ("state", "estadual"):
+        clean_tier = "estadual"
+    elif clean_tier in ("municipal", "city"):
+        clean_tier = "municipal"
+    else:
+        clean_tier = "federal"
+
     clean_type = re.sub(r"[^a-zA-Z0-9]+", ".", act_type.strip().lower())[:80].strip(".")
     if not clean_type:
         clean_type = "ato"
 
     if act_number and act_year and act_number.strip() and act_year > 1800:
         clean_num = re.sub(r"[^a-zA-Z0-9.\-]+", "", act_number.strip())[:50]
-        return f"urn:lex:{clean_territory}:federal:{clean_type}:{act_year};{clean_num}"
+        return f"urn:lex:{clean_territory}:{clean_tier}:{clean_type}:{act_year};{clean_num}"
 
     fallback_id = content_hash[:16] if content_hash else str(uuid.uuid4())[:8]
-    return f"urn:lex:{clean_territory}:federal:{clean_type}:{act_date.isoformat()};{fallback_id}"
+    date_str = act_date.isoformat()
+    return f"urn:lex:{clean_territory}:{clean_tier}:{clean_type}:{date_str};{fallback_id}"
 
 
 class GazetteMapper:
@@ -537,6 +547,7 @@ class GazetteMapper:
         gazette_date = GazetteDate.from_date(payload.date_obj)
 
         group, rank, nature = resolve_hierarchy(payload.act_type, payload.section)
+        tier = getattr(payload, "tier", "federal") or "federal"
         canonical_urn = generate_canonical_urn(
             territory_code=payload.territory_code,
             act_type=payload.act_type,
@@ -544,6 +555,7 @@ class GazetteMapper:
             act_year=payload.act_year,
             act_date=payload.date_obj,
             content_hash=content_hash.hex_digest,
+            tier=tier,
         )
 
         return NormativeAct(

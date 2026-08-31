@@ -24,25 +24,29 @@ class PostgresTreatmentRepository(TreatmentRepositoryPort):
 
     async def save_mutations(self, mutations: list[NormativeActMutation]) -> None:
         """Appends extracted mutation deltas to the write model ledger."""
-        for m in mutations:
-            mut_id = m.id or uuid.uuid4()
-            model = NormativeActMutationModel(
-                id=mut_id,
-                target_act_id=m.target_act_id,
-                target_node_path=m.target_node_path.value,
-                author_act_id=m.author_act_id,
-                author_dispositivo_ref=m.author_dispositivo_ref,
-                mutation_type=m.mutation_type.value,
-                new_text=m.new_text,
-                new_structured_payload=m.new_structured_payload,
-                publication_date=m.publication_date.value,
-                effective_date=m.effective_date.value,
-                extraction_source=m.extraction_source,
-                confidence_score=m.confidence_score,
-                mutation_sha256=m.mutation_sha256.hex_digest,
-            )
-            self._session.add(model)
-        self._session.commit()
+        try:
+            for m in mutations:
+                mut_id = m.id or uuid.uuid4()
+                model = NormativeActMutationModel(
+                    id=mut_id,
+                    target_act_id=m.target_act_id,
+                    target_node_path=m.target_node_path.value,
+                    author_act_id=m.author_act_id,
+                    author_dispositivo_ref=m.author_dispositivo_ref,
+                    mutation_type=m.mutation_type.value,
+                    new_text=m.new_text,
+                    new_structured_payload=m.new_structured_payload,
+                    publication_date=m.publication_date.value,
+                    effective_date=m.effective_date.value,
+                    extraction_source=m.extraction_source,
+                    confidence_score=m.confidence_score,
+                    mutation_sha256=m.mutation_sha256.hex_digest,
+                )
+                self._session.add(model)
+            self._session.commit()
+        except Exception:
+            self._session.rollback()
+            raise
 
     async def update_normative_act_treatment(
         self,
@@ -51,10 +55,14 @@ class PostgresTreatmentRepository(TreatmentRepositoryPort):
         metadata_json: dict[str, Any] | None,
     ) -> None:
         """Updates a NormativeAct row with parsed AST or extracted NER metadata."""
-        act_model = self._session.get(NormativeActModel, act_id)
-        if act_model is not None:
-            if structured_content is not None:
-                act_model.structured_content = structured_content
-            if metadata_json is not None:
-                act_model.metadata_json = metadata_json
-            self._session.commit()
+        try:
+            act_model = self._session.get(NormativeActModel, act_id)
+            if act_model is not None:
+                if structured_content is not None:
+                    act_model.structured_content = structured_content
+                if metadata_json is not None:
+                    act_model.metadata_json = metadata_json
+                self._session.commit()
+        except Exception:
+            self._session.rollback()
+            raise

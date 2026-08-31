@@ -5,7 +5,6 @@ t_retry = min(t_max, uniform(t_min, t_prev * 3))
 """
 
 import random
-import time
 from collections.abc import Sequence
 from typing import Any
 
@@ -86,11 +85,10 @@ class DecorrelatedJitterRetryMiddleware:
             prev_delay = request.meta.get("retry_delay", self.min_delay)
             sleep_delay = self.calculate_delay(prev_delay)
 
-            time.sleep(sleep_delay)
-
             retry_req = request.copy()
             retry_req.meta["retry_times"] = retries
             retry_req.meta["retry_delay"] = sleep_delay
+            retry_req.meta["download_delay"] = sleep_delay
             retry_req.dont_filter = True
             return retry_req
 

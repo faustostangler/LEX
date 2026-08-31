@@ -17,7 +17,7 @@ import httpx
 from bs4 import BeautifulSoup
 from scrapy.crawler import Crawler
 from scrapy.http import HtmlResponse, Request, Response
-from sqlalchemy import create_engine
+from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from tqdm import tqdm
 
@@ -36,7 +36,7 @@ from lex.ingestion.infrastructure.persistence.postgres_repository import (
 from lex.ingestion.infrastructure.scrapy_project.spiders.base import (
     BaseGazetteSpider,
 )
-from lex.shared_kernel.config import LexSettings
+from lex.shared_kernel.config import get_settings
 
 # -----------------------------------------------------------------------------
 # Module Constants & Operational Defaults (ADR-003)
@@ -105,26 +105,30 @@ class FederalDouSpider(BaseGazetteSpider):
         self.repository = repository
         self.force = force.lower() in ("true", "1", "yes") if isinstance(force, str) else force
         self._session: Session | None = None
+        self._engine: Engine | None = None
 
     @classmethod
     def from_crawler(cls, crawler: Crawler, *args: Any, **kwargs: Any) -> Self:
         spider = super().from_crawler(crawler, *args, **kwargs)
         try:
-            settings = LexSettings()
+            settings = get_settings()
             if settings.database_url:
-                engine = create_engine(str(settings.database_url), pool_pre_ping=True)
-                session_factory = sessionmaker(bind=engine)
+                spider._engine = create_engine(str(settings.database_url), pool_pre_ping=True)
+                session_factory = sessionmaker(bind=spider._engine)
                 spider._session = session_factory()
                 spider.repository = PostgresGazetteRepository(session=spider._session)
         except Exception:
             spider.repository = None
             spider._session = None
+            spider._engine = None
         return spider
 
     def closed(self, reason: str) -> None:
-        """Clean up repository database session on spider shutdown."""
+        """Clean up repository database session and engine on spider shutdown."""
         if hasattr(self, "_session") and self._session is not None:
             self._session.close()
+        if hasattr(self, "_engine") and self._engine is not None:
+            self._engine.dispose()
 
     def start_requests(self) -> Generator[Request, None, None]:
         """Generate starting index requests for each configured DOU section and target date."""

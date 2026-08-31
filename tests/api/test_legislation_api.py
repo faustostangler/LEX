@@ -182,3 +182,21 @@ class TestLegislationApi:
         assert data["status"] == "PENDING_BASE_INGESTION"
         assert data["canonical_urn"] == "urn:lex:br:federal:lei:1993;8666"
         assert "mutations" in data
+
+    def test_legislation_not_found_returns_404(self, client: TestClient) -> None:
+        """Querying a non-existent statute returns 404 Not Found."""
+        random_id = uuid.uuid4()
+        response = client.get(f"/api/v1/legislation/{random_id}")
+        assert response.status_code == 404
+
+    def test_cors_headers_configured(self, client: TestClient) -> None:
+        """Verifies CORS headers on API requests."""
+        response = client.options(
+            "/api/v1/legislation/urn:lex:br:federal:lei:2020;10000",
+            headers={
+                "Origin": "http://localhost:3000",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert response.status_code == 200
+        assert "access-control-allow-origin" in response.headers
