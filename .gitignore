@@ -26,7 +26,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# local env files
+# local env files — NEVER commit secrets (CWE-798 / 12-Factor App §III)
+.env
 .env*.local
 
 # vercel
