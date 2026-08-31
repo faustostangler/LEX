@@ -33,6 +33,37 @@ class TestFederalDouSpider:
         assert spider.start_date == date(2024, 1, 2)
         assert spider.end_date == date(2024, 1, 2)
 
+    def test_from_crawler_handles_database_operational_error_with_warning(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Scenario: OperationalError during from_crawler disables repository with warning."""
+        from unittest.mock import MagicMock
+
+        from scrapy.crawler import Crawler
+        from sqlalchemy.exc import OperationalError
+
+        crawler = MagicMock(spec=Crawler)
+        crawler.settings = MagicMock()
+        crawler.signals = MagicMock()
+
+        def _mock_create_engine(*args: object, **kwargs: object) -> None:
+            raise OperationalError("Connection refused", {}, Exception())
+
+        monkeypatch.setattr(
+            "lex.ingestion.infrastructure.scrapy_project.spiders.federal.dou_spider.create_engine",
+            _mock_create_engine,
+        )
+
+        spider = FederalDouSpider.from_crawler(
+            crawler,
+            start_date="2024-01-02",
+            end_date="2024-01-02",
+        )
+        assert spider.repository is None
+        assert spider._session is None
+        assert spider._engine is None
+
     def test_spider_start_requests_generates_all_sections(self) -> None:
         """Scenario: start_requests generates index URLs for all modern sections."""
         spider = FederalDouSpider(start_date="2024-01-02", end_date="2024-01-02")

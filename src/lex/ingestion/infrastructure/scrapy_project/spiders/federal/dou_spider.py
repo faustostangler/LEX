@@ -19,6 +19,7 @@ from bs4 import BeautifulSoup
 from scrapy.crawler import Crawler
 from scrapy.http import HtmlResponse, Request, Response
 from sqlalchemy import Engine, create_engine
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 from tqdm import tqdm
 
@@ -138,7 +139,11 @@ class FederalDouSpider(BaseGazetteSpider):
                 session_factory = sessionmaker(bind=spider._engine)
                 spider._session = session_factory()
                 spider.repository = PostgresGazetteRepository(session=spider._session)
-        except Exception:
+        except (SQLAlchemyError, OperationalError, OSError) as exc:
+            logger.warning(
+                f"Failed to initialize database repository for spider '{spider.name}': {exc}. "
+                "Zero-scrape preflight map check will be disabled for this crawl session."
+            )
             spider.repository = None
             spider._session = None
             spider._engine = None
