@@ -45,8 +45,9 @@ If `mutmut` or equivalent mutation tools are completely missing from the environ
 ### Step 2: Static Type Checking
 Run `[ENV_EXEC] [TYPE_EXEC]` (e.g. `mypy --strict`) and resolve all type issues. If no static type checker is present, manually verify all type annotations.
 
-### Step 3: Linting & Formatting
+### Step 3: Linting, Formatting & SAST (Security Scanning)
 Run `[ENV_EXEC] [LINT_EXEC]` (e.g. `ruff check`) and formatting tools to clean the code style.
+- **Static Application Security Testing (SAST)**: Run security linter rules (`ruff check --select S` / Bandit / Snyk) to detect common **MITRE CWE-1000** vulnerabilities (such as unsafe shell execution, insecure deserialization CWE-502, hardcoded credentials CWE-798, SQL injections CWE-89). All security linter violations must be resolved.
 
 ### Step 4: Langfuse Eval Gate (`[EVAL_EXEC]`) — Mandatory for LLM Pipelines
 
@@ -112,7 +113,7 @@ If an Eval dimension fails (score below the blocking threshold):
 - [ ] If mutation tools are missing, did I achieve at least 95% line/branch coverage?
 - [ ] Have I resolved all survived mutants or uncovered paths?
 - [ ] Does the codebase pass static type verification (`[ENV_EXEC] [TYPE_EXEC]`) with zero errors?
-- [ ] Does the linter and formatter (`[ENV_EXEC] [LINT_EXEC]`) run clean?
+- [ ] Does the linter, formatter, and SAST security scanner (`[ENV_EXEC] [LINT_EXEC]`) run clean with 0 CWE security violations?
 - [ ] **LLM Eval Gate** (mandatory for AI/LLM pipelines):
   - [ ] Have I read the Eval Rubric from `docs/specs/EVAL-NNN-*.md`?
   - [ ] Have I run `[EVAL_EXEC]` against the golden dataset?

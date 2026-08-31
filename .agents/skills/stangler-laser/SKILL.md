@@ -54,7 +54,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
 | Domain / Chapter | Reference Files to Read (Relative to `../stangler-doctor/references/`) | Key Focus Areas |
 |------------------|------------------------------------------------------------------------|-----------------|
 | **01 Computing Fundamentals and Servers** | `1-01 Computing Fundamentals and Servers 1.md`<br>`2-01 Computing Fundamentals and Servers 2.md` | Server architecture, networking, OS tuning, distributed systems scaling |
-| **02 Programming and Backend Development** | `3-02 Programming and Backend Development 1.md`<br>`4-02 Programming and Backend Development 2.md`<br>`5-02 Programming and Backend Development 3.md` | Python patterns, clean code, ABAC/OPA authorization models, API contracts |
+| **02 Programming and Backend Development** | `3-02 Programming and Backend Development 1.md`<br>`4-02 Programming and Backend Development 2.md`<br>`5-02 Programming and Backend Development 3.md` | Python patterns, clean code, ABAC/OPA authorization models, API contracts, MITRE CWE-1000 AppSec mitigations |
 | **03 Databases, Queues, and Cache** | `6-03 Databases, Queues, and Cache 1.md`<br>`7-03 Databases, Queues, and Cache 2.md` | PostgreSQL patterns, Redis cache invalidation, queues, isolation |
 | **04 Containers, Docker, and Orchestration** | `8-04 Containers, Docker, and Orchestration 1.md`<br>`9-04 Containers, Docker, and Orchestration 2.md` | Kubernetes deployment at scale, self-healing, Docker multi-role configs |
 | **05 IA and Machine Learning Fundamentals** | `10-05 IA and Machine Learning Fundamentals 1.md`<br>`11-05 IA and Machine Learning Fundamentals 2.md`<br>`12-05 IA and Machine Learning Fundamentals 3.md`<br>`13-05 IA and Machine Learning Fundamentals 4.md` | Feature engineering, uncertainty quantification, evaluation metrics |
@@ -63,7 +63,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
 | **08 MLOps and LLMOps** | `21-08 MLOps and LLMOps 1.md`<br>`22-08 MLOps and LLMOps 2.md` | Structured outputs, pipeline orchestration, model monitoring, A/B tests |
 | **09 AI and LLM System Architecture** | `23-09 AI and LLM System Architecture 1.md`<br>`24-09 AI and LLM System Architecture 2.md` | Advanced RAG (9 hybrid search/re-ranking methods), agent topologies |
 | **10 Automation, and Integration** | `25-10 Automation, and Integration 1.md`<br>`26-10 Automation, and Integration 2.md` | Hexagonal Ports & Adapters deep-dive, Web Scraping (Playwright/BS4) |
-| **11 Container-Infra Security** | `27-11 Container-Infra Security 1.md`<br>`28-11 Container-Infra Security 2.md` | Supply chain security, image scanning, container hardening, Snyk/Sonar |
+| **11 Container-Infra Security** | `27-11 Container-Infra Security 1.md`<br>`28-11 Container-Infra Security 2.md` | Supply chain security, image scanning, container hardening, Snyk/Sonar, MITRE CWE infrastructure weakness mitigations |
 | **12 Observability and Operation** | `29-12 Observability and Operation 1.md`<br>`30-12 Observability and Operation 2.md`<br>`31-12 Observability and Operation 3.md` | Prometheus/Grafana Golden Signals, Grafana Loki, distributed tracing, post-mortems |
 | **13 Cloud and Hardware for AI** | `32-13 Cloud and Hardware for AI 1.md`<br>`33-13 Cloud and Hardware for AI 2.md`<br>`34-13 Cloud and Hardware for AI 3.md`<br>`35-13 Cloud and Hardware for AI 4.md`<br>`36-13 Cloud and Hardware for AI 5.md` | Cloud APIs, GPU/TPU provisioning and cost tuning, Pulumi/Terraform IaC |
 

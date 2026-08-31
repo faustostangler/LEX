@@ -59,14 +59,20 @@ Write the precise scenarios using a BDD-style (Given-When-Then) structure where 
 - **When**: {invalid action or input is provided}
 - **Then**: {specific domain validation error is raised}
 
+### Scenario 3: {Security Invariant & Negative Test (MITRE CWE-1000)}
+- **Given**: {adversarial / malformed input, unauthorized identity, or corrupted serialized payload}
+- **When**: {payload is passed to domain port or adapter}
+- **Then**: {system rejects immediately with fail-fast validation error; zero untrusted state persisted}
+
 ## 5. Boundary Conditions & Exception Mapping
 
-Map specific inputs to the precise exceptions they must raise:
+Map specific inputs and security boundaries to the precise exceptions they must raise:
 
-| Input Field | Input Value / Boundary | Expected Exception / Error Code |
-|-------------|-------------------------|---------------------------------|
-| `amount`    | `< 0.0`                 | `NegativeAmountError`           |
-| `email`     | `invalid-email`         | `InvalidEmailFormatError`       |
+| Input Field / Attack Vector | Input Value / Boundary | Target CWE Category | Expected Exception / Error Code |
+|-----------------------------|-------------------------|---------------------|---------------------------------|
+| `amount`                    | `< 0.0`                 | CWE-20              | `NegativeAmountError`           |
+| `email`                     | `invalid-email`         | CWE-20              | `InvalidEmailFormatError`       |
+| `payload` (untrusted)       | `raw serialized data`   | CWE-502             | `DeserializationForbiddenError` |
 
 ## 6. Regression Anchors (For Bug Fixes Only)
 

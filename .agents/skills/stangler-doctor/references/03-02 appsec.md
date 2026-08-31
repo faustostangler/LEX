@@ -5508,3 +5508,64 @@ Call for comments: ipd SP 800-230: Additional SLH-DSA Parameter Sets for Limited
 Source: sloth/slh/README.md at main · slh-dsa/sloth - GitHub
 URL: https://github.com/slh-dsa/sloth/blob/main/slh/README.md
 sloth/slh/README.md at main · slh-dsa/sloth · GitHub Skip to content Navigation Menu Toggle navigation Sign in Appearance settings Platform AI CODE CREATION GitHub Copilot Write better code with AI GitHub Spark Build and deploy intelligent apps GitHub Models Manage and compare prompts MCP Registry New Integrate external tools DEVELOPER WORKFLOWS Actions Automate any workflow Codespaces Instant dev environments Issues Plan and track work Code Review Manage code changes APPLICATION SECURITY GitHub Advanced Security Find and fix vulnerabilities Code security Secure your code as you build Secret protection Stop leaks before they start EXPLORE Why GitHub Documentation Blog Changelog Marketplace View all features Solutions BY COMPANY SIZE Enterprises Small and medium teams Startups Nonprofits BY USE CASE App Modernization DevSecOps DevOps CI/CD View all use cases BY INDUSTRY Healthcare Financial services Manufacturing Government View all industries View all solutions Resources EXPLORE BY TOPIC AI Software Development DevOps Security View all topics EXPLORE BY TYPE Customer stories Events & webinars Ebooks & reports Business insights GitHub Skills SUPPORT & SERVICES Documentation Customer support Community forum Trust center Partners View all resources Open Source COMMUNITY GitHub Sponsors Fund open source developers PROGRAMS Security Lab Maintainer Community Accelerator GitHub Stars Archive Program REPOSITORIES Topics Trending Collections Enterprise ENTERPRISE SOLUTIONS Enterprise platform AI-powered developer platform AVAILABLE ADD-ONS GitHub Advanced Security Enterprise-grade security features Copilot for Business Enterprise-grade AI features Premium Support Enterprise-grade 24/7 support Pricing Search or jump to... Search code, repositories, users, issues, pull requests... Search Clear Search syntax tips Provide feedback We read every piece of feedback, and take your input very seriously. [-] Include my email address so I can be contacted Cancel Submit feedback Saved searches Use saved searches to filter your results more quickly Name Query To see all available qualifiers, see our documentation. Cancel Create saved search Sign in Sign up Appearance settings Resetting focus You signed in with another tab or window. Reload to refresh your session. You signed out in another tab or window. Reload to refresh your session. You switched accounts on another tab or window. Reload to refresh your session. Dismiss alert slh-dsa / sloth Public Notifications You must be signed in to change notification settings Fork 9 Star 50 Code Issues 3 Pull requests 2 Actions Projects Security and quality 0 Insights Additional navigation options Code Issues Pull requests Actions Projects Security and quality Insights Files Expand file tree main Breadcrumbs sloth / slh / README.md Copy path Blame More file actions Blame More file actions Latest commit mjosaarinen init release 2 years ago cb794e9 · 2 years ago History History Open commit details History 79 lines (62 loc) · 6.36 KB main Breadcrumbs sloth / slh / README.md Top File metadata and controls Preview Code Blame 79 lines (62 loc) · 6.36 KB Raw Copy raw file Download raw file Outline Edit and raw actions slh 2023-12-21 Markku-Juhani O. Saarinen mjos@iki.fi This is my portable C implementation of SLH-DSA ("Stateless Hash-Based Digital Signature Standard") as described in FIPS 205 Initial Public Draft from August 2023. SLH-DSA is derived from the SPHINCS+ submission to the NIST PQC Competition, with minor modifications. This is code is functionally equivalent to my slh-dsa-py Python implementation, but up to 10x faster. Building and Running Known Answer Tests The implementation in this directory includes the necessary SHA2 and SHAKE256 hash functions and hence has no external library dependencies. On a Linux system, you may usually just use make to build the executable kat_test . With the Makefile defaults, only a single test vector is generated for each variant for a quick check: The ../kat subdirectory also contains full text of the first vector of each response file. One way to check that the newly generated test vectors is to compare their hashes with the ones in the kat subdirectory (the "2" prefix means a matching hash is found.) The longer known answer tests are quite big, so I include just SHA256 hashes for 1, 10, and 100 first ones. Notes on the implementation This self-contained implementation covers all 12 parameter sets contained in FIPS 205 IPD (Table 1, Section 10.) Note that NIST is standardizing only the "small simple" (s) and "fast simple" (f) variants using SHA2 and SHAKE hashes. The following table also includes the PQ Security Categories and byte sizes of the public keys, secret keys, and signatures with each variant. The code output matches the Known Answer Tests of the reference implementation ("consistent-basew" branch, commit eccdc43.) That branch implements the changes in FIPS 205 IPD in relation to SPHINCS+ 3.1, which are documented in Section 1.3 of FIPS 205 IPD. Note that the naming in that implementation is still with "SPHINCS", whereas this implementation uses names from FIPS 205. The source files slh_.? are related to the implementation of SLH-DSA. The file slh_dsa.h provides an external API; note that this API only creates detached signatures. The key generation function slh_keygen() and the signature generation function slh_sign() expect an additional rbg parameter which is a callback to a randombytes() fuction. This allows the same code to be instantiated with real random number generators and deterministic ones for Known Answer Tests.The instantiation for SLH-DSA-SHAKE parameters is in slh_shake.c ; this uses my provided C implementations in sha3_api. and keccap.c , but the API is similar to standard ones such as OpenSSL or in Kernel. Similarly, the SLH-DSA-SHA2 parameters are in slh_sha2.c . The source files kat_*.? provide a Known Answer Test harness that creates matching test vector data to the NIST PQC harness and the reference implementation. These components have many components unrelated to SLH-DSA, such as the toy AES256-CTR implementation required for the "fake" random number generation in testing. Note that running the KAT generator test does not mean that the implementation is correct; this merely means that test vectors were successfully reproduced. One additionally needs to compare them with the reference "golden" values in the kat subdirectory. Footer © 2026 GitHub, Inc. Footer navigation Terms Privacy Security Status Community Docs Contact Manage cookies Do not share my personal information You can't perform that action at this time.
+
+--------------------------------------------------------------------------------
+Source: MITRE Common Weakness Enumeration - CWE-1000: Research Concepts
+URL: https://cwe.mitre.org/data/definitions/1000.html
+Type: Architectural Security Standard & Weakness Taxonomy
+
+# MITRE CWE-1000: Research Concepts View & Defensive Engineering Taxonomy
+
+## 1. Overview of CWE-1000 (Research View)
+CWE-1000 (Research Concepts) is the fundamental, comprehensive taxonomic view of Common Weakness Enumeration (CWE). Unlike operational or slice-specific views (e.g. CWE-1003 or OWASP Top 10), CWE-1000 organizes all known software weaknesses based on their underlying conceptual, architectural, behavioral, and abstraction flaws. It serves as the master taxonomy for architectural threat modeling, secure design patterns, and static/dynamic security analysis.
+
+## 2. Core Weakness Pillars & Architectural Mitigations
+
+### 2.1 Improper Input Validation & Type Confusion (CWE-20, CWE-1287)
+- **Conceptual Flaw**: Accepting untrusted input without validating type, length, range, syntax, or semantics before processing.
+- **Architectural Mitigation in DDD / Hexagonal**:
+  - Encapsulate all domain concepts in validated **Value Objects** (Pydantic / Custom types with fail-fast validation at instantiation).
+  - Eliminate *Primitive Obsession* (raw `str`/`int` in domain entity signatures).
+  - Make invalid states unrepresentable at compile/construction time.
+
+### 2.2 Injections & Neutralization Flaws (CWE-74, CWE-89, CWE-78, CWE-116)
+- **Conceptual Flaw**: Embedding untrusted input directly into structured command interpreters (SQL, Shell, HTML/Templates, LDAP) without proper parameterization or escaping.
+- **Architectural Mitigation**:
+  - Restrict database operations to parameterized queries via ORM/Query Builders in Infrastructure Adapters.
+  - Ban shell execution with user-controlled input (`shell=True`, raw string concatenation).
+  - Enforce strict encoding/escaping at Presentation boundaries.
+
+### 2.3 Deserialization of Untrusted Data (CWE-502)
+- **Conceptual Flaw**: Deserializing untrusted object graphs using execution-capable serialization formats (e.g. Python `pickle`, `yaml.unsafe_load`).
+- **Architectural Mitigation**:
+  - Use schema-bound data serialization (Pydantic models, JSON, PyArrow Feather/IPC).
+  - Strictly prohibit Python `pickle` across network boundaries or untrusted cache layers.
+  - Implement Anti-Corruption Layers (ACL) that validate and translate external serialized payloads into pure Domain Value Objects.
+
+### 2.4 Broken Access Control & Privilege Management (CWE-285, CWE-863, CWE-250)
+- **Conceptual Flaw**: Failing to enforce authorization boundaries at use cases or operating with excessive privileges.
+- **Architectural Mitigation**:
+  - Enforce Policy-as-Code / ABAC / RBAC within Application Use Cases.
+  - Execute container workloads as unprivileged non-root users (UID > 1000) using Distroless or minimal Alpine base images.
+
+### 2.5 State Management, Concurrency & Race Conditions (CWE-362, CWE-662)
+- **Conceptual Flaw**: Insecure shared mutable state across asynchronous coroutines, threads, or distributed microservices.
+- **Architectural Mitigation**:
+  - Enforce Eventual Consistency via **Domain Events** and the **Transactional Outbox Pattern** across bounded context boundaries.
+  - Eliminate cross-context distributed locks or shared database connections.
+  - Enforce idempotent message consumers with unique event deduplication keys.
+
+### 2.6 Sensitive Data Exposure & Information Leakage (CWE-200, CWE-209, CWE-359)
+- **Conceptual Flaw**: Emitting PII, credentials, or internal stack traces into telemetry, logs, or external error responses.
+- **Architectural Mitigation**:
+  - LGPD/GDPR redaction filters in Sentry and logging pipelines.
+  - Centralize configuration and secrets exclusively in `.env` validated by `pydantic-settings`.
+  - Handle domain exceptions gracefully without leaking infrastructure diagnostics to clients.
+
+### 2.7 Reliance on Vulnerable Third-Party Components (CWE-1395)
+- **Conceptual Flaw**: Introducing transitive vulnerabilities via unpinned or vulnerable third-party dependencies.
+- **Architectural Mitigation**:
+  - Deterministic dependency resolution via `uv.lock`.
+  - Automated dependency vulnerability scanning (Snyk, GitHub Dependabot, `pip-audit`).
+  - SAST scanning in CI/CD pipeline (`ruff check --select S`, Bandit).
+

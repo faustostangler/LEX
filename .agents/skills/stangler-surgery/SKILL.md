@@ -53,6 +53,11 @@ Refactor the implementation to meet Hexagonal Architecture and Clean Code guidel
 - **Import Hygiene**: NEVER use `src.` prefixes in imports within `src/` (e.g. use relative imports or sibling paths).
 - **Configuration**: Centralize all environment parameters in `.env` and validate with `pydantic-settings` in `config.py` (fail-fast principle).
 - **Strict Typing**: Ensure rigorous type hints are added to all function signatures and class attributes. Avoid `Any`. Use `Final` or `Protocol` where appropriate.
+- **Defensive Engineering & Secure Coding (MITRE CWE-1000)**:
+  - Enforce construction-time validation on all Value Objects to prevent injection and type-confusion flaws (CWE-20, CWE-1287).
+  - Use parameterized SQL queries exclusively via SQLAlchemy/Postgres ports (eliminating CWE-89).
+  - Use safe binary/data serialization formats (PyArrow Feather / JSON), completely prohibiting unsafe serializers like `pickle` (mitigating CWE-502).
+  - Shield external integrations behind strict Anti-Corruption Layer (ACL) translators to sanitize external input boundaries.
 
 ---
 
@@ -185,6 +190,7 @@ LANGFUSE_HOST: str = Field(default="https://cloud.langfuse.com", description="La
 - [ ] Are domain models strictly segregated from persistence/ORM models?
 - [ ] Is config configured in `.env` and validated using Pydantic Settings?
 - [ ] Are Google Style docstrings and strict type hints applied without using `Any`?
+- [ ] Are secure coding patterns applied (parameterized queries, safe serializers, Value Object invariants for CWE-1000 mitigation)?
 - [ ] Does the code build and pass `[ENV_EXEC] [TEST_EXEC]` successfully?
 - [ ] **LLM Adapters**: Is the Langfuse client initialized in `__init__` using env vars from `pydantic-settings`?
 - [ ] **LLM Adapters**: Is every generative call decorated with `@observe(as_type="generation")`?

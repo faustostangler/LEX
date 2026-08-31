@@ -36,3 +36,21 @@ class TestLexSettings:
 
         with pytest.raises(ValidationError, match="LEX_DATABASE_URL must be defined"):
             LexSettings(database_url=None)
+
+    def test_production_cors_empty_raises_validation_error(self) -> None:
+        """Boundary condition: Empty CORS origins in production mode fails fast."""
+        with pytest.raises(ValidationError, match="LEX_CORS_ALLOWED_ORIGINS cannot be empty"):
+            LexSettings(
+                database_url="postgresql://user:pass@localhost:5432/lex",
+                environment="production",
+                cors_allowed_origins=[],
+            )
+
+    def test_production_cors_wildcard_raises_validation_error(self) -> None:
+        """Boundary condition: Wildcard CORS origins in production mode fails fast."""
+        with pytest.raises(ValidationError, match="Wildcard '\\*' CORS origin is prohibited"):
+            LexSettings(
+                database_url="postgresql://user:pass@localhost:5432/lex",
+                environment="production",
+                cors_allowed_origins=["*"],
+            )

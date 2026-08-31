@@ -108,6 +108,11 @@ class LexSettings(BaseSettings):
         description="Langfuse telemetry endpoint",
     )
 
+    environment: str = Field(
+        default="development",
+        description="Runtime environment (development, staging, production)",
+    )
+
     # API & Web Security
     cors_allowed_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:3000"],
@@ -116,9 +121,19 @@ class LexSettings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_mandatory_settings(self) -> Self:
-        """Enforces that database_url is provided via environment or settings."""
+        """Enforces that database_url is provided and CORS is restricted in production."""
         if self.database_url is None:
             raise ValueError("Mandatory configuration missing: LEX_DATABASE_URL must be defined.")
+
+        if self.environment.lower() == "production":
+            if not self.cors_allowed_origins:
+                raise ValueError(
+                    "Security violation: LEX_CORS_ALLOWED_ORIGINS cannot be empty in production."
+                )
+            if "*" in self.cors_allowed_origins:
+                raise ValueError(
+                    "Security violation: Wildcard '*' CORS origin is prohibited in production."
+                )
         return self
 
 

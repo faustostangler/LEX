@@ -70,7 +70,8 @@ Use the form: "We will {decision} because {rationale}."
 - [ ] No framework dependencies in Domain layer
 - [ ] Tests strategy defined (boundary conditions, mock boundary, evals)
 - [ ] Observability plan included
-- [ ] LGPD/Security implications assessed
+- [ ] Threat Modeling & MITRE CWE-1000 compliance assessed (Input Validation, AuthZ/AuthN, Deserialization, Insecure State, Error Handling)
+- [ ] LGPD/PII & Security implications assessed
 
 ## References
 
