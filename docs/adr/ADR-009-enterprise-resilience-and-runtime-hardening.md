@@ -80,6 +80,20 @@ In CLI streaming treatment (`run_treat`), queries against `pg_class.reltuples` s
 ### 4.11 JSON SQL Engine Filtering for Non-PostgreSQL Adapters (CWE-400 Mitigation)
 In `PostgresConsolidationRepository.get_compiled_act_by_urn`, fallback lookups on non-PostgreSQL engines (such as hermetic SQLite test suites) execute `func.json_extract(CompiledNormativeActModel.compiled_ast, "$.canonical_urn") == canonical_urn` inside the database query engine rather than loading all table records into Python memory (`scalars(stmt).all()`). This enforces bounded $O(1)$ memory consumption and eliminates test suite out-of-memory crashes (CWE-400).
 
+### 4.12 API Ingress Throttling, Rate-Limiting & Security Headers (CWE-307 / CWE-799 / Pending Implementation)
+*Status: Architecture Planned / Pending Implementation (HIGH-04)*  
+To protect on-the-fly AST compilation endpoints (`/api/v1/legislation/{identifier}`) from computational denial-of-service (DDoS) and resource exhaustion:
+- Ingress Rate Limiting: Introduce `slowapi` or ASGI `RateLimitMiddleware` enforcing per-IP / per-token RPS limits.
+- Environment Gating: Enforce `--no-serve` or require `LEX_ENVIRONMENT != production` for unauthenticated endpoints when starting `lex serve`.
+- Security Headers: Inject CSP (`Content-Security-Policy`), HSTS, and X-Content-Type-Options headers globally across all API responses.
+
+### 4.13 Centralized Database Engine Factory & Bounded CLI Connection Pools (CWE-400 / Pending Implementation)
+*Status: Architecture Planned / Pending Implementation (HIGH-05)*  
+To prevent `QueuePool` connection exhaustion during high-throughput CLI batch processing (`lex treat`, `lex compile`):
+- Singleton Factory: Centralize all `create_engine` invocations within a unified `lex.shared_kernel.database` factory.
+- Bounded Pool Configuration: Enforce explicit bounds across all CLI and daemon contexts (`pool_size=5`, `max_overflow=5`, `pool_pre_ping=True`, `pool_recycle=1800`).
+- Session Lifecycle Governance: Ensure deterministic session context cleanup across async batch loops (`anyio.run`).
+
 ---
 
 ## 5. Consequences and Trade-offs
