@@ -243,10 +243,28 @@ class TestPostgresGazetteRepository:
         assert rows[0].section is None
         assert rows[0].edition_number is None
 
-        # Assert completed map handles None as empty string
         completed_map = repo.get_completed_editions_map(
             territory_id=TerritoryId.from_code("BA"),
             start_date=GazetteDate.from_date(date(2024, 2, 1)),
             end_date=GazetteDate.from_date(date(2024, 2, 28)),
         )
         assert completed_map == {(date(2024, 2, 10), "")}
+
+    def test_normative_act_model_has_pending_treatment_partial_index(self) -> None:
+        """Scenario: NormativeActModel declares partial index on pending treatment rows."""
+        from sqlalchemy import Index
+
+        from lex.ingestion.infrastructure.persistence.models import NormativeActModel
+
+        table_args = NormativeActModel.__table_args__
+        indices = [arg for arg in table_args if isinstance(arg, Index)]
+        index_names = {idx.name for idx in indices}
+
+        assert "ix_normative_acts_pending_treatment" in index_names
+        partial_idx = next(
+            idx for idx in indices if idx.name == "ix_normative_acts_pending_treatment"
+        )
+        assert partial_idx.dialect_options["postgresql"]["where"] is not None
+        assert "structured_content IS NULL" in str(
+            partial_idx.dialect_options["postgresql"]["where"]
+        )

@@ -187,4 +187,9 @@ class NormativeActModel(Base):
             "metadata_json",
             postgresql_using="gin",
         ),
+        Index(
+            "ix_normative_acts_pending_treatment",
+            "id",
+            postgresql_where=text("structured_content IS NULL"),
+        ),
     )
