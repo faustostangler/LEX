@@ -5,22 +5,13 @@ discrete RawNormativeActPayload streaming, and Zero-Scrape skip optimizations.
 """
 
 import json
-import uuid
-from datetime import UTC, date, datetime
+from datetime import date
 from unittest.mock import MagicMock
 
 import pytest
 from scrapy.http import HtmlResponse, Request
 
 from lex.ingestion.application.ports import GazetteRepositoryPort
-from lex.ingestion.domain.entities import GazetteEdition
-from lex.ingestion.domain.value_objects import (
-    DocumentHash,
-    FederativeTier,
-    GazetteDate,
-    IngestionStatus,
-    TerritoryId,
-)
 from lex.ingestion.infrastructure.dto import (
     RawGazettePayload,
     RawNormativeActPayload,
@@ -192,92 +183,11 @@ class TestFederalDouSpider:
             assert act_item.act_number == str(idx)
 
     @pytest.mark.anyio
-    async def test_spider_zero_scrape_skip_when_already_completed(self) -> None:
-        """Scenario: Zero-Scrape skip avoids crawling when edition is already completed."""
-        mock_repo = MagicMock(spec=GazetteRepositoryPort)
-        mock_repo.get_by_territory_and_date.return_value = GazetteEdition(
-            id=uuid.uuid4(),
-            territory_id=TerritoryId.from_code("BR"),
-            tier=FederativeTier.FEDERAL,
-            date=GazetteDate.from_date(date(2024, 1, 2)),
-            edition_number="1",
-            section="secao_1",
-            is_extra_edition=False,
-            power="executive",
-            source_url="https://www.in.gov.br",
-            summary_hash=DocumentHash.from_text("summary"),
-            total_acts=2,
-            ingestion_status=IngestionStatus.COMPLETED,
-            scraped_at=datetime.now(UTC),
-        )
-
+    async def test_spider_parse_modern_section_yields_payloads(self) -> None:
+        """Scenario: parse_modern_section yields RawGazettePayload and RawNormativeActPayload."""
         spider = FederalDouSpider(
             start_date="2024-01-02",
             end_date="2024-01-02",
-            repository=mock_repo,
-            force=False,
-        )
-
-        mock_json = {
-            "dateUrl": "02-01-2024",
-            "section": "DO1",
-            "jsonArray": [
-                {
-                    "pubName": "DO1",
-                    "urlTitle": "portaria-1",
-                    "title": "PORTARIA 1",
-                },
-                {
-                    "pubName": "DO1",
-                    "urlTitle": "portaria-2",
-                    "title": "PORTARIA 2",
-                },
-            ],
-        }
-        html = f"<script id='params' type='application/json'>{json.dumps(mock_json)}</script>"
-        request = Request(
-            url="https://www.in.gov.br/leiturajornal?data=02-01-2024&secao=do1",
-            meta={
-                "gazette_date": date(2024, 1, 2),
-                "section_key": "do1",
-                "section_name": "secao_1",
-                "is_extra": False,
-            },
-        )
-        response = HtmlResponse(url=request.url, body=html.encode("utf-8"), request=request)
-
-        items: list[RawGazettePayload | RawNormativeActPayload] = []
-        async for item in spider.parse_modern_section(response):
-            items.append(item)
-
-        # Zero items yielded because it was skipped
-        assert len(items) == 0
-
-    @pytest.mark.anyio
-    async def test_spider_force_flag_overrides_zero_scrape_skip(self) -> None:
-        """Scenario: --force flag bypasses Zero-Scrape skip and re-crawls edition."""
-        mock_repo = MagicMock(spec=GazetteRepositoryPort)
-        mock_repo.get_by_territory_and_date.return_value = GazetteEdition(
-            id=uuid.uuid4(),
-            territory_id=TerritoryId.from_code("BR"),
-            tier=FederativeTier.FEDERAL,
-            date=GazetteDate.from_date(date(2024, 1, 2)),
-            edition_number="1",
-            section="secao_1",
-            is_extra_edition=False,
-            power="executive",
-            source_url="https://www.in.gov.br",
-            summary_hash=DocumentHash.from_text("summary"),
-            total_acts=2,
-            ingestion_status=IngestionStatus.COMPLETED,
-            scraped_at=datetime.now(UTC),
-        )
-
-        spider = FederalDouSpider(
-            start_date="2024-01-02",
-            end_date="2024-01-02",
-            repository=mock_repo,
-            force=True,
         )
 
         mock_json = {
@@ -308,5 +218,107 @@ class TestFederalDouSpider:
         async for item in spider.parse_modern_section(response):
             items.append(item)
 
-        # Forced run yields 1 edition + 2 acts = 3 items
+        # Yields 1 edition + 2 acts = 3 items
         assert len(items) == 3
+        assert isinstance(items[0], RawGazettePayload)
+        assert isinstance(items[1], RawNormativeActPayload)
+        assert isinstance(items[2], RawNormativeActPayload)
+
+    def test_spider_force_flag_bypasses_preflight_skip(self) -> None:
+        """Scenario: --force flag bypasses Zero-Scrape skip and requests all sections."""
+        mock_repo = MagicMock(spec=GazetteRepositoryPort)
+        mock_repo.get_completed_editions_map.return_value = {
+            (date(2024, 1, 2), "secao_1"),
+            (date(2024, 1, 2), "secao_2"),
+        }
+
+        spider = FederalDouSpider(
+            start_date="2024-01-02",
+            end_date="2024-01-02",
+            repository=mock_repo,
+            force=True,
+        )
+
+        requests = list(spider.start_requests())
+        # Forced run emits all 4 sections
+        assert len(requests) == 4
+        # Repository was never queried because force=True
+        mock_repo.get_completed_editions_map.assert_not_called()
+
+    def test_spider_start_requests_preflight_skip(self) -> None:
+        """Scenario: start_requests skips emitting HTTP requests for already completed editions."""
+        mock_repo = MagicMock(spec=GazetteRepositoryPort)
+        mock_repo.get_completed_editions_map.return_value = {
+            (date(2024, 1, 2), "secao_1"),
+            (date(2024, 1, 2), "secao_2"),
+        }
+
+        spider = FederalDouSpider(
+            start_date="2024-01-02",
+            end_date="2024-01-02",
+            repository=mock_repo,
+            force=False,
+        )
+
+        requests = list(spider.start_requests())
+        # Total sections is 4 (do1, do2, do3, doe).
+        # Since do1 and do2 are completed, only 2 requests are generated
+        assert len(requests) == 2
+        emitted_keys = {r.meta["section_key"] for r in requests}
+        assert emitted_keys == {"do3", "doe"}
+
+    def test_date_necklace_descending_starts_at_oldest_completed(self) -> None:
+        """Scenario: Descending date_necklace starts at min(completed) and appends recent block."""
+        spider = FederalDouSpider(
+            start_date="2024-01-01",
+            end_date="2024-01-10",
+            reverse=True,
+        )
+        # Suppose Jan 5, Jan 6, Jan 7 are completed
+        completed_dates = {date(2024, 1, 5), date(2024, 1, 6), date(2024, 1, 7)}
+        necklace = list(spider.date_necklace(completed_dates=completed_dates))
+
+        # Expected:
+        # Block 1 (historical backfill): Jan 5 down to Jan 1
+        # Block 2 (recent slice): Jan 10 down to Jan 6
+        expected = [
+            date(2024, 1, 5),
+            date(2024, 1, 4),
+            date(2024, 1, 3),
+            date(2024, 1, 2),
+            date(2024, 1, 1),
+            date(2024, 1, 10),
+            date(2024, 1, 9),
+            date(2024, 1, 8),
+            date(2024, 1, 7),
+            date(2024, 1, 6),
+        ]
+        assert necklace == expected
+
+    def test_date_necklace_ascending_starts_at_newest_completed(self) -> None:
+        """Scenario: Ascending date_necklace starts at max(completed) and appends past block."""
+        spider = FederalDouSpider(
+            start_date="2024-01-01",
+            end_date="2024-01-10",
+            reverse=False,
+        )
+        # Suppose Jan 5, Jan 6, Jan 7 are completed
+        completed_dates = {date(2024, 1, 5), date(2024, 1, 6), date(2024, 1, 7)}
+        necklace = list(spider.date_necklace(completed_dates=completed_dates))
+
+        # Expected:
+        # Block 1: Jan 7 up to Jan 10
+        # Block 2: Jan 1 up to Jan 6
+        expected = [
+            date(2024, 1, 7),
+            date(2024, 1, 8),
+            date(2024, 1, 9),
+            date(2024, 1, 10),
+            date(2024, 1, 1),
+            date(2024, 1, 2),
+            date(2024, 1, 3),
+            date(2024, 1, 4),
+            date(2024, 1, 5),
+            date(2024, 1, 6),
+        ]
+        assert necklace == expected

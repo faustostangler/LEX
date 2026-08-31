@@ -16,7 +16,7 @@ def test_build_parser_structure() -> None:
     # Test crawl subcommand defaults
     args = parser.parse_args(["crawl"])
     assert args.command == "crawl"
-    assert args.spider == "federal_dou"
+    assert args.spider is None
     assert args.date is None
     assert args.start_date is None
     assert args.end_date is None
@@ -35,10 +35,10 @@ def test_build_parser_structure() -> None:
 
 def test_parse_cli_args_shorthand_routing() -> None:
     """Scenario: parse_cli_args normalizes shorthand arguments."""
-    # Empty args -> crawl federal_dou
+    # Empty args -> crawl all
     parsed_empty = parse_cli_args([])
     assert parsed_empty.command == "crawl"
-    assert parsed_empty.spider == "federal_dou"
+    assert parsed_empty.spider is None
     assert parsed_empty.force is False
 
     # Spider shorthand -> crawl state_sp
@@ -47,19 +47,19 @@ def test_parse_cli_args_shorthand_routing() -> None:
     assert parsed_spider.spider == "state_sp"
     assert parsed_spider.start_date == "2024-05-10"
 
-    # Flag shorthand -> crawl federal_dou with flag
+    # Flag shorthand -> crawl with flag (defaults to all spiders)
     parsed_flag = parse_cli_args(["--start-date", "2024-01-02"])
     assert parsed_flag.command == "crawl"
-    assert parsed_flag.spider == "federal_dou"
+    assert parsed_flag.spider is None
     assert parsed_flag.start_date == "2024-01-02"
 
 
-def test_cli_no_args_defaults_to_crawl_federal_dou() -> None:
-    """Scenario: Invoking CLI with no arguments defaults to crawling federal_dou descending."""
+def test_cli_no_args_defaults_to_crawl_all_spiders() -> None:
+    """Scenario: Invoking CLI with no arguments defaults to crawling all spiders descending."""
     with patch("lex.cli.run_crawler") as mock_run_crawler:
         main([])
         mock_run_crawler.assert_called_once_with(
-            spider_name="federal_dou",
+            spider_name=None,
             start_date=None,
             end_date=None,
             single_date=None,
@@ -82,12 +82,12 @@ def test_cli_spider_name_shorthand_defaults_to_crawl() -> None:
         )
 
 
-def test_cli_flag_only_defaults_to_crawl_federal_dou() -> None:
-    """Scenario: Running 'lex --start-date 2024-01-02' defaults spider to federal_dou."""
+def test_cli_flag_only_defaults_to_crawl_all_spiders() -> None:
+    """Scenario: Running 'lex --start-date 2024-01-02' defaults spider to None (all)."""
     with patch("lex.cli.run_crawler") as mock_run_crawler:
         main(["--start-date", "2024-01-02", "--force"])
         mock_run_crawler.assert_called_once_with(
-            spider_name="federal_dou",
+            spider_name=None,
             start_date="2024-01-02",
             end_date=None,
             single_date=None,
@@ -101,7 +101,7 @@ def test_cli_single_date_shorthand() -> None:
     with patch("lex.cli.run_crawler") as mock_run_crawler:
         main(["--date", "2024-01-15"])
         mock_run_crawler.assert_called_once_with(
-            spider_name="federal_dou",
+            spider_name=None,
             start_date=None,
             end_date=None,
             single_date="2024-01-15",

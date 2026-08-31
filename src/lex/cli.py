@@ -40,7 +40,7 @@ from lex.treatment.infrastructure.persistence.postgres_repository import (
 # -----------------------------------------------------------------------------
 # Earliest publication available in the modern digital DOU portal (in.gov.br)
 EARLIEST_MODERN_DOU_DATE: str = "2002-01-02"
-DEFAULT_SPIDER_NAME: str = "federal_dou"
+DEFAULT_SPIDER_NAME: str = "all"
 
 
 def init_db() -> None:
@@ -81,14 +81,14 @@ def init_db() -> None:
 
 
 def run_crawler(
-    spider_name: str,
+    spider_name: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
     single_date: str | None = None,
     force: bool = False,
     reverse: bool = True,
 ) -> None:
-    """Execute Scrapy crawler process for target spider and date interval in descending order."""
+    """Execute Scrapy crawler process for target spider(s) and date interval."""
     settings = get_project_settings()
     process = CrawlerProcess(settings)
 
@@ -111,8 +111,21 @@ def run_crawler(
     order_desc = "newest → oldest" if reverse else "oldest → newest"
     force_msg = " [FORCE OVERRIDE]" if force else ""
     interval_info = f"range: {effective_start} to {effective_end} | order: {order_desc}"
-    print(f"Starting spider '{spider_name}' ({interval_info}){force_msg}...")
-    process.crawl(spider_name, **spider_args)
+
+    # Discover spiders to run: specific name or all discovered spiders
+    if spider_name is None or spider_name.lower() == "all":
+        spiders_to_run = process.spider_loader.list()
+    else:
+        spiders_to_run = [spider_name]
+
+    if not spiders_to_run:
+        print("No spiders found to execute.")
+        return
+
+    for name in spiders_to_run:
+        print(f"Starting spider '{name}' ({interval_info}){force_msg}...")
+        process.crawl(name, **spider_args)
+
     process.start()
 
 
@@ -378,8 +391,8 @@ def build_parser() -> argparse.ArgumentParser:
     crawl_parser.add_argument(
         "spider",
         nargs="?",
-        default=DEFAULT_SPIDER_NAME,
-        help="Spider name (default: federal_dou). Options: federal_dou, state_sp, etc.",
+        default=None,
+        help="Spider name (options: federal_dou, or omit/'all' for all spiders).",
     )
     crawl_parser.add_argument(
         "--date",
@@ -478,12 +491,12 @@ def parse_cli_args(args: list[str] | None = None) -> argparse.Namespace:
 
     valid_commands = ("init-db", "crawl", "treat", "compile", "query", "serve", "-h", "--help")
     if not raw_args:
-        raw_args = ["crawl", DEFAULT_SPIDER_NAME]
+        raw_args = ["crawl"]
     elif raw_args[0] not in valid_commands:
         if not raw_args[0].startswith("-"):
             raw_args = ["crawl"] + raw_args
         else:
-            raw_args = ["crawl", DEFAULT_SPIDER_NAME] + raw_args
+            raw_args = ["crawl"] + raw_args
 
     parser = build_parser()
     return parser.parse_args(raw_args)

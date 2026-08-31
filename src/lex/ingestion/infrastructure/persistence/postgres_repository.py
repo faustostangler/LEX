@@ -5,7 +5,7 @@ NormativeAct discrete legal entities with idempotent ON CONFLICT resolution and 
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -128,7 +128,12 @@ class PostgresGazetteRepository(GazetteRepositoryPort):
         if section is not None:
             stmt = stmt.where(GazetteEditionModel.section == section)
 
-        model = self._session.execute(stmt).scalars().first()
+        try:
+            model = self._session.execute(stmt).scalars().first()
+        except Exception:
+            self._session.rollback()
+            raise
+
         if model is None:
             return None
 
@@ -148,13 +153,37 @@ class PostgresGazetteRepository(GazetteRepositoryPort):
             scraped_at=model.scraped_at,
         )
 
+    def get_completed_editions_map(
+        self,
+        territory_id: TerritoryId,
+        start_date: GazetteDate,
+        end_date: GazetteDate,
+    ) -> set[tuple[date, str]]:
+        """Retrieve set of (date, section) tuples already completed in database."""
+        stmt = select(GazetteEditionModel.date, GazetteEditionModel.section).where(
+            GazetteEditionModel.territory_id == territory_id.code,
+            GazetteEditionModel.date >= start_date.value,
+            GazetteEditionModel.date <= end_date.value,
+            GazetteEditionModel.ingestion_status == IngestionStatus.COMPLETED.value,
+        )
+        try:
+            rows = self._session.execute(stmt).all()
+            return {(r[0], r[1]) for r in rows}
+        except Exception:
+            self._session.rollback()
+            raise
+
     def exists_by_hash(self, summary_hash: DocumentHash) -> bool:
         """Check if an edition container already exists matching summary_hash."""
         stmt = select(GazetteEditionModel.id).where(
             GazetteEditionModel.summary_sha256 == summary_hash.hex_digest
         )
-        result = self._session.execute(stmt).first()
-        return result is not None
+        try:
+            result = self._session.execute(stmt).first()
+            return result is not None
+        except Exception:
+            self._session.rollback()
+            raise
 
     def save_normative_act(self, act: NormativeAct) -> None:
         """Persist a discrete normative act with idempotent ON CONFLICT semantics."""
@@ -286,30 +315,43 @@ class PostgresGazetteRepository(GazetteRepositoryPort):
 
     def get_act_by_id(self, act_id: uuid.UUID) -> NormativeAct | None:
         """Retrieve an individual normative act by primary key."""
-        model = self._session.execute(
-            select(NormativeActModel).where(NormativeActModel.id == act_id)
-        ).scalar_one_or_none()
+        try:
+            model = self._session.execute(
+                select(NormativeActModel).where(NormativeActModel.id == act_id)
+            ).scalar_one_or_none()
+        except Exception:
+            self._session.rollback()
+            raise
         if model is None:
             return None
         return self._map_act_model_to_domain(model)
 
     def find_acts_by_edition(self, edition_id: uuid.UUID) -> list[NormativeAct]:
         """Retrieve all normative acts associated with a specific gazette edition."""
-        models = (
-            self._session.execute(
-                select(NormativeActModel).where(NormativeActModel.edition_id == edition_id)
+        try:
+            models = (
+                self._session.execute(
+                    select(NormativeActModel).where(NormativeActModel.edition_id == edition_id)
+                )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
-        return [self._map_act_model_to_domain(m) for m in models]
+            return [self._map_act_model_to_domain(m) for m in models]
+        except Exception:
+            self._session.rollback()
+            raise
 
     def exists_act_by_hash(self, content_hash: DocumentHash) -> bool:
         """Check if an act already exists with the given content SHA-256."""
         stmt = select(NormativeActModel.id).where(
             NormativeActModel.content_sha256 == content_hash.hex_digest
         )
-        return self._session.execute(stmt).first() is not None
+        try:
+            result = self._session.execute(stmt).first()
+            return result is not None
+        except Exception:
+            self._session.rollback()
+            raise
 
     def to_domain_act(self, model: NormativeActModel) -> NormativeAct:
         """Map ORM model directly to pure domain entity."""

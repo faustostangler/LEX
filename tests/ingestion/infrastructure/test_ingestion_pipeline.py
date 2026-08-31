@@ -63,6 +63,14 @@ class DummyRepository:
     ) -> GazetteEdition | None:
         return self.saved_editions[0] if self.saved_editions else None
 
+    def get_completed_editions_map(
+        self,
+        territory_id: TerritoryId,
+        start_date: GazetteDate,
+        end_date: GazetteDate,
+    ) -> set[tuple[date, str]]:
+        return set()
+
     def exists_by_hash(self, summary_hash: DocumentHash) -> bool:
         return False
 

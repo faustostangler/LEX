@@ -4,6 +4,7 @@ Defines structural subtyping Protocols for repository persistence,
 in-memory stream extraction, and normative act querying without framework dependencies.
 """
 
+from datetime import date
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
@@ -30,6 +31,15 @@ class GazetteRepositoryPort(Protocol):
         section: str | None = None,
     ) -> GazetteEdition | None:
         """Retrieve a unique gazette edition if already ingested."""
+        ...
+
+    def get_completed_editions_map(
+        self,
+        territory_id: TerritoryId,
+        start_date: GazetteDate,
+        end_date: GazetteDate,
+    ) -> set[tuple[date, str]]:
+        """Retrieve set of (date, section) tuples already completed in database."""
         ...
 
     def exists_by_hash(self, summary_hash: DocumentHash) -> bool:

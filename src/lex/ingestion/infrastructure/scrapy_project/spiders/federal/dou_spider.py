@@ -24,7 +24,6 @@ from tqdm import tqdm
 from lex.ingestion.application.ports import GazetteRepositoryPort
 from lex.ingestion.domain.value_objects import (
     GazetteDate,
-    IngestionStatus,
     TerritoryId,
 )
 from lex.ingestion.infrastructure.dto import (
@@ -129,9 +128,28 @@ class FederalDouSpider(BaseGazetteSpider):
 
     def start_requests(self) -> Generator[Request, None, None]:
         """Generate starting index requests for each configured DOU section and target date."""
-        for target_date in self.date_range():
+        completed_set: set[tuple[date, str]] = set()
+        if not self.force and self.repository is not None:
+            try:
+                completed_set = self.repository.get_completed_editions_map(
+                    territory_id=TerritoryId.from_code(self.territory_code),
+                    start_date=GazetteDate.from_date(self.start_date),
+                    end_date=GazetteDate.from_date(self.end_date),
+                )
+                if completed_set:
+                    self.logger.info(
+                        f"Pre-flight Zero-Scrape: {len(completed_set)} editions already in DB. "
+                        "Skipping network requests."
+                    )
+            except Exception as e:
+                self.logger.warning(f"Failed to fetch completed editions map: {e}")
+
+        completed_dates = {d for d, _ in completed_set} if completed_set else set()
+        for target_date in self.date_necklace(completed_dates=completed_dates):
             date_formatted = target_date.strftime("%d-%m-%Y")
             for sec_key, sec_name in MODERN_SECTIONS_MAP.items():
+                if (target_date, sec_name) in completed_set:
+                    continue  # SOTA-KISS: Instant Pre-flight Zero-Scrape Skip (0.0001s)
                 url = f"{LEITURA_JORNAL_BASE_URL}?data={date_formatted}&secao={sec_key}"
                 yield Request(
                     url=url,
@@ -192,24 +210,6 @@ class FederalDouSpider(BaseGazetteSpider):
 
         edition_number = str(articles[0].get("editionNumber", "1")) if articles else "1"
         total_acts = len(articles)
-
-        # Check Zero-Scrape Early-Exit condition (ADR-004)
-        if not self.force and self.repository is not None:
-            existing_edition = self.repository.get_by_territory_and_date(
-                territory_id=TerritoryId.from_code(self.territory_code),
-                date=GazetteDate.from_date(target_date),
-                section=section_name,
-            )
-            if (
-                existing_edition is not None
-                and existing_edition.ingestion_status == IngestionStatus.COMPLETED
-                and existing_edition.total_acts == total_acts
-            ):
-                self.logger.debug(
-                    f"[SKIP] DOU {section_name} ({target_date.isoformat()}) already fully "
-                    f"ingested ({total_acts} acts). Skipping download."
-                )
-                return
 
         # 1. Yield Edition Container Metadata
         yield RawGazettePayload(

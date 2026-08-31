@@ -94,6 +94,55 @@ class BaseGazetteSpider(scrapy.Spider):
                 yield current
                 current += timedelta(days=1)
 
+    def date_necklace(
+        self,
+        completed_dates: set[date] | None = None,
+    ) -> Generator[date, None, None]:
+        """Yield dates split into two contiguous blocks anchored on historical boundaries.
+
+        If completed_dates is provided and non-empty:
+          - In descending order (reverse=True):
+            1. Block 1 (Historical Backlog): Starts from oldest completed date (min)
+               down to self.start_date, repeating the oldest date to ensure completeness.
+            2. Block 2 (Recent Slice): Starts from self.end_date down to oldest + 1 day.
+          - In ascending order (reverse=False):
+            1. Block 1: Starts from newest completed date (max) up to self.end_date.
+            2. Block 2: Starts from self.start_date up to (newest_completed - 1 day).
+        Otherwise, falls back to the standard linear date_range().
+        """
+        if not completed_dates:
+            yield from self.date_range()
+            return
+
+        if self.reverse:
+            oldest_completed = min(completed_dates)
+
+            # Block 1: From oldest_completed down to start_date
+            current = min(oldest_completed, self.end_date)
+            while current >= self.start_date:
+                yield current
+                current -= timedelta(days=1)
+
+            # Block 2: From end_date down to (oldest_completed + 1 day)
+            current = self.end_date
+            while current > oldest_completed:
+                yield current
+                current -= timedelta(days=1)
+        else:
+            newest_completed = max(completed_dates)
+
+            # Block 1: From newest_completed up to end_date
+            current = max(newest_completed, self.start_date)
+            while current <= self.end_date:
+                yield current
+                current += timedelta(days=1)
+
+            # Block 2: From start_date up to (newest_completed - 1 day)
+            current = self.start_date
+            while current < newest_completed:
+                yield current
+                current += timedelta(days=1)
+
     def start_requests(self) -> Generator[Request, None, None]:
         """Generate starting requests (overridden by concrete spiders)."""
         yield from ()

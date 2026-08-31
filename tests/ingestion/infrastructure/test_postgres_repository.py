@@ -186,3 +186,27 @@ class TestPostgresGazetteRepository:
 
         unknown_hash = DocumentHash.from_text("COMPLETELY DIFFERENT CONTENT")
         assert repo.exists_by_hash(unknown_hash) is False
+
+    def test_get_completed_editions_map(self, db_session: Session) -> None:
+        """Scenario: Retrieve set of completed (date, section) tuples within date range."""
+        repo = PostgresGazetteRepository(session=db_session)
+        ed1 = make_test_edition(pub_date=date(2024, 1, 2), section="secao_1")
+        ed2 = make_test_edition(pub_date=date(2024, 1, 2), section="secao_2")
+        # ed3 is failed
+        ed3 = make_test_edition(pub_date=date(2024, 1, 3), section="secao_1")
+        ed3 = ed3.model_copy(update={"ingestion_status": IngestionStatus.FAILED})
+
+        repo.save(ed1)
+        repo.save(ed2)
+        repo.save(ed3)
+
+        completed_map = repo.get_completed_editions_map(
+            territory_id=TerritoryId.from_code("BR"),
+            start_date=GazetteDate.from_date(date(2024, 1, 1)),
+            end_date=GazetteDate.from_date(date(2024, 1, 5)),
+        )
+
+        assert completed_map == {
+            (date(2024, 1, 2), "secao_1"),
+            (date(2024, 1, 2), "secao_2"),
+        }
