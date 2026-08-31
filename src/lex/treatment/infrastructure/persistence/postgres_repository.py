@@ -4,6 +4,7 @@ Persists treated AST structures into normative_acts.structured_content,
 NER entities into normative_acts.metadata_json, and mutations into normative_act_mutations.
 """
 
+import hashlib
 import uuid
 from datetime import UTC, date, datetime
 from typing import Any
@@ -111,10 +112,10 @@ class PostgresTreatmentRepository(TreatmentRepositoryPort):
                             section="1",
                             is_extra_edition=False,
                             power="executive",
-                            source_url=f"urn:stub:edition:{target_territory}:{act_year_val}",
-                            summary_sha256=f"stub_edition_{target_territory}_{act_year_val}".ljust(
-                                64, "0"
-                            ),
+                            source_url=f"https://stub.lex.internal/edition/{target_territory}/{act_year_val}",
+                            summary_sha256=hashlib.sha256(
+                                f"stub:edition:{target_territory}:{act_year_val}".encode()
+                            ).hexdigest(),
                             total_acts=0,
                             ingestion_status="completed",
                             scraped_at=datetime.now(UTC),
@@ -123,6 +124,7 @@ class PostgresTreatmentRepository(TreatmentRepositoryPort):
                         self._session.flush()
 
                     # Insert Stub NormativeActModel
+                    stub_content = "[STUB] Pending base text ingestion"
                     stub_act = NormativeActModel(
                         id=target_id,
                         edition_id=existing_edition.id,
@@ -137,10 +139,12 @@ class PostgresTreatmentRepository(TreatmentRepositoryPort):
                         title=title_val,
                         ementa=None,
                         hierarchy=[],
-                        source_url=f"urn:stub:{urn_val}",
-                        content_sha256=f"stub_content_{target_id}".ljust(64, "0"),
-                        char_count=0,
-                        raw_content="",
+                        source_url=f"https://stub.lex.internal/{urn_val}",
+                        content_sha256=hashlib.sha256(
+                            f"stub:content:{target_id}".encode()
+                        ).hexdigest(),
+                        char_count=len(stub_content),
+                        raw_content=stub_content,
                         structured_content=None,
                         classification_source="stub_placeholder",
                         classification_confidence=1.0,

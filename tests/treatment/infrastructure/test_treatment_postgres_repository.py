@@ -135,13 +135,25 @@ class TestPostgresTreatmentRepository:
         repo = PostgresTreatmentRepository(session=db_session)
         await repo.save_mutations([mut])
 
-        # 4. Assert Stub entity auto-creation
+        # 4. Assert Stub entity auto-creation and domain invariant compliance
         stub_act = db_session.get(NormativeActModel, target_act_id)
         assert stub_act is not None
         assert stub_act.is_stub is True
         assert stub_act.canonical_urn == target_urn
         assert stub_act.act_year == 1993
         assert stub_act.act_type == "LEI"
+        assert stub_act.source_url.startswith("https://")
+        assert len(stub_act.content_sha256) == 64
+        assert int(stub_act.content_sha256, 16) > 0  # Valid hex SHA-256
+
+        # Assert pure domain re-hydration succeeds without DomainInvariantViolationError
+        from lex.ingestion.infrastructure.persistence.postgres_repository import (
+            PostgresGazetteRepository,
+        )
+        gazette_repo = PostgresGazetteRepository(session=db_session)
+        domain_act = gazette_repo.to_domain_act(stub_act)
+        assert domain_act.is_stub is True
+        assert domain_act.canonical_urn == target_urn
 
         # 5. Assert Backfill Queue item creation
         backfill_item = (

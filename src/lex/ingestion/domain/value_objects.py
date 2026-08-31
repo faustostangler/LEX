@@ -42,6 +42,7 @@ class ClassificationSource(StrEnum):
     PRE_SEGMENTED_SOURCE = "pre_segmented_source"
     DETERMINISTIC_REGEX = "deterministic_regex"
     LLM_FALLBACK = "llm_fallback"
+    STUB_PLACEHOLDER = "stub_placeholder"
 
 
 class ActType(StrEnum):
