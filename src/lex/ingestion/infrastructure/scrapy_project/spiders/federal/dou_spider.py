@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 # Module Constants & Operational Defaults (ADR-003)
 # -----------------------------------------------------------------------------
-DEFAULT_CONCURRENT_SEMAPHORE: int = 50
+DEFAULT_CONCURRENT_SEMAPHORE: int = 20
 DEFAULT_HTTP_TIMEOUT_SECONDS: float = 20.0
 DEFAULT_MAX_CONNECTIONS: int = 80
 DEFAULT_MAX_KEEPALIVE_CONNECTIONS: int = 50
@@ -52,7 +52,7 @@ DEFAULT_TQDM_MIN_INTERVAL_SECONDS: float = 0.2
 DEFAULT_TQDM_BAR_FORMAT: str = (
     "{desc}: {percentage:3.0f}%|{bar}| {n:4d}/{total:4d} [{elapsed}<{remaining}, {rate_fmt}]"
 )
-DEFAULT_ACT_BATCH_SIZE: int = 50
+DEFAULT_ACT_BATCH_SIZE: int = 20
 
 LEITURA_JORNAL_BASE_URL: str = "https://www.in.gov.br/leiturajornal"
 ARTICLE_READ_BASE_URL: str = "https://www.in.gov.br/web/dou/-/"
@@ -372,10 +372,9 @@ class FederalDouSpider(BaseGazetteSpider):
 
             for i in range(0, len(articles), DEFAULT_ACT_BATCH_SIZE):
                 chunk = articles[i : i + DEFAULT_ACT_BATCH_SIZE]
-                tasks = [_fetch_act(art) for art in chunk]
-                results = await asyncio.gather(*tasks)
-
-                for act_payload in results:
+                tasks = [asyncio.create_task(_fetch_act(art)) for art in chunk]
+                for fut in asyncio.as_completed(tasks):
+                    act_payload = await fut
                     if act_payload is not None:
                         yield act_payload
 

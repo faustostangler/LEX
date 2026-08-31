@@ -118,17 +118,20 @@ class TestFederalDouSpider:
         assert edition_payload.edition_number == "1"
         assert edition_payload.total_acts == 2
 
-        act_1 = items[1]
-        assert isinstance(act_1, RawNormativeActPayload)
+        acts_by_type = {
+            act.act_type: act for act in items[1:] if isinstance(act, RawNormativeActPayload)
+        }
+        assert "PORTARIA" in acts_by_type
+        assert "DECRETO" in acts_by_type
+
+        act_1 = acts_by_type["PORTARIA"]
         assert act_1.territory_code == "BR"
-        assert act_1.act_type == "PORTARIA"
         assert act_1.act_number == "1"
         assert act_1.act_year == 2024
         assert act_1.hierarchy == ["Ministério da Fazenda"]
 
-        act_2 = items[2]
-        assert isinstance(act_2, RawNormativeActPayload)
-        assert act_2.act_type == "DECRETO"
+        act_2 = acts_by_type["DECRETO"]
+        assert act_2.territory_code == "BR"
         assert act_2.act_number == "2"
         assert act_2.act_year == 2024
 
@@ -177,10 +180,13 @@ class TestFederalDouSpider:
         assert isinstance(items[0], RawGazettePayload)
         assert items[0].total_acts == 120
 
-        # Verify all 120 acts yielded in exact sequential order
-        for idx, act_item in enumerate(items[1:]):
-            assert isinstance(act_item, RawNormativeActPayload)
-            assert act_item.act_number == str(idx)
+        # Verify all 120 acts yielded across chunks
+        act_numbers = {
+            act_item.act_number
+            for act_item in items[1:]
+            if isinstance(act_item, RawNormativeActPayload)
+        }
+        assert act_numbers == {str(idx) for idx in range(120)}
 
     @pytest.mark.anyio
     async def test_spider_parse_modern_section_yields_payloads(self) -> None:
