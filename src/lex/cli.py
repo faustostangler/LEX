@@ -268,7 +268,11 @@ def run_treat(
                         pbar.update(1)
 
                     # Single atomic commit per chunk of 500 items (ADR-015)
-                    session.commit()
+                    try:
+                        session.commit()
+                    except Exception:
+                        session.rollback()
+                        raise
 
             if processed == 0:
                 print("No pending acts found for Stage 2 treatment.")

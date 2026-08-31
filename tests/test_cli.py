@@ -343,3 +343,74 @@ def test_run_treat_handles_negative_catalog_statistics(
 
     captured = capsys.readouterr()
     assert "Processing Stage 2 treatment (continuous chunk stream)..." in captured.out
+
+
+def test_run_treat_rollback_on_commit_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scenario: Failure during chunk commit triggers session.rollback and propagates (MED-01)."""
+    import uuid
+    from datetime import UTC, date, datetime
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from lex.cli import run_treat
+    from lex.ingestion.infrastructure.persistence.models import Base, NormativeActModel
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine)
+
+    with session_factory() as session:
+        act = NormativeActModel(
+            id=uuid.uuid4(),
+            edition_id=uuid.uuid4(),
+            territory_id="BR",
+            date=date(2024, 1, 2),
+            section="secao_1",
+            edition_number="1",
+            is_extra_edition=False,
+            act_type="LEI",
+            title="Lei Rollback",
+            canonical_urn="urn:lex:br:federal:lei:2024;99",
+            publication_nature="normativa_abstrata",
+            raw_content="Art. 1 Texto",
+            content_sha256="9" * 64,
+            char_count=20,
+            source_url="https://in.gov.br/99",
+            scraped_at=datetime.now(UTC),
+        )
+        session.add(act)
+        session.commit()
+
+    mock_session = session_factory()
+    rollback_called = False
+
+    def _mock_commit() -> None:
+        raise RuntimeError("Disk full / Integrity error during commit")
+
+    def _mock_rollback() -> None:
+        nonlocal rollback_called
+        rollback_called = True
+
+    monkeypatch.setattr(mock_session, "commit", _mock_commit)
+    monkeypatch.setattr(mock_session, "rollback", _mock_rollback)
+    monkeypatch.setattr("lex.cli.get_session_factory", lambda **kwargs: (lambda: mock_session))
+
+    with patch("lex.cli.ProcessNormativeActUseCase") as mock_use_case_cls:
+        mock_instance = MagicMock()
+        mock_instance.execute = AsyncMock(return_value=MagicMock(track="A", mutations_extracted=0))
+        mock_use_case_cls.return_value = mock_instance
+
+        with pytest.raises(RuntimeError, match="Disk full"):
+            run_treat(force=True, limit=1)
+
+    assert rollback_called is True
+
