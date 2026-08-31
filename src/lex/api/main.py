@@ -11,24 +11,22 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from lex.api.errors import TraceIdMiddleware, register_exception_handlers
 from lex.api.v1.legislation import get_db_session
 from lex.api.v1.legislation import router as legislation_router
 from lex.shared_kernel.config import get_settings
+from lex.shared_kernel.database import get_session_factory, get_singleton_engine
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Lifespan context manager configuring database connection pools."""
-    settings = get_settings()
-    engine = create_engine(str(settings.database_url), echo=False)
-    session_factory = sessionmaker(bind=engine)
+    engine = get_singleton_engine()
+    session_factory = get_session_factory(engine=engine)
     app.state.session_factory = session_factory
     yield
-    engine.dispose()
 
 
 def create_app(session: Session | None = None) -> FastAPI:
@@ -39,8 +37,8 @@ def create_app(session: Session | None = None) -> FastAPI:
             "High-performance compiled legislation, CQRS mutation ledgers, "
             "and official gazette search."
         ),
-        version="1.0.0",
-        lifespan=None if session is not None else lifespan,
+        version="0.1.0",
+        lifespan=lifespan,
     )
 
     settings = get_settings()
@@ -60,7 +58,10 @@ def create_app(session: Session | None = None) -> FastAPI:
     if session is not None:
 
         def _test_session_override() -> Generator[Session, None, None]:
-            yield session
+            try:
+                yield session
+            finally:
+                pass
 
         app.dependency_overrides[get_db_session] = _test_session_override
     else:
@@ -68,8 +69,7 @@ def create_app(session: Session | None = None) -> FastAPI:
         def _get_session_from_app() -> Generator[Session, None, None]:
             session_factory = getattr(app.state, "session_factory", None)
             if session_factory is None:
-                engine = create_engine(str(settings.database_url), echo=False)
-                session_factory = sessionmaker(bind=engine)
+                session_factory = get_session_factory()
                 app.state.session_factory = session_factory
             db_session = session_factory()
             try:
