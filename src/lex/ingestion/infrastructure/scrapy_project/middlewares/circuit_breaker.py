@@ -10,7 +10,6 @@ from typing import Any
 from urllib.parse import urlparse
 
 from scrapy.crawler import Crawler
-from scrapy.exceptions import IgnoreRequest
 from scrapy.http import Request, Response
 
 # -----------------------------------------------------------------------------
@@ -70,13 +69,19 @@ class DomainCircuitBreakerMiddleware:
         """Get the current failure count for a domain."""
         return self._failures[domain]
 
-    def process_request(self, request: Request, spider: Any = None) -> None:
-        """Intercept request and block if the domain circuit is open."""
+    def process_request(self, request: Request, spider: Any = None) -> Any:
+        """Intercept request and defer execution non-blockingly if the domain circuit is open."""
         domain = self._get_domain(request)
         if self.is_open(domain):
-            raise IgnoreRequest(
-                f"Circuit breaker OPEN for domain '{domain}'. Request dropped during cooldown."
-            )
+            tripped_ts = self._tripped_at.get(domain, time.time())
+            elapsed = time.time() - tripped_ts
+            remaining = max(0.1, self.reset_timeout - elapsed)
+            request.priority -= 10
+            request.dont_filter = True
+
+            from twisted.internet import reactor, task
+
+            return task.deferLater(reactor, remaining, lambda: None)
 
     def process_response(
         self, request: Request, response: Response, spider: Any = None

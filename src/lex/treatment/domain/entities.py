@@ -147,6 +147,11 @@ class NormativeActMutation(BaseModel):
     extraction_source: str
     confidence_score: float = Field(default=1.0, ge=0.0, le=1.0)
     mutation_sha256: DocumentHash
+    target_canonical_urn: str | None = None
+    target_title: str | None = None
+    target_act_type: str | None = None
+    target_act_number: str | None = None
+    target_act_year: int | None = None
 
     @model_validator(mode="after")
     def _validate_mutation_invariants(self) -> Self:

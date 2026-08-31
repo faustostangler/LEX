@@ -150,7 +150,7 @@ def run_treat(
     """
     settings = get_settings()
     engine = create_engine(str(settings.database_url), echo=False)
-    session_factory = sessionmaker(bind=engine)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
 
     with session_factory() as session:
         gazette_repo = PostgresGazetteRepository(session=session)
@@ -261,13 +261,16 @@ def run_treat(
                     for m in models:
                         last_seen_id = m.id
                         domain_act = gazette_repo.to_domain_act(m)
-                        result = await use_case.execute(domain_act)
+                        result = await use_case.execute(domain_act, auto_commit=False)
                         processed += 1
                         pbar.set_postfix(
                             track=result.track,
                             muts=result.mutations_extracted,
                         )
                         pbar.update(1)
+
+                    # Single atomic commit per chunk of 500 items (ADR-015)
+                    session.commit()
 
             if processed == 0:
                 print("No pending acts found for Stage 2 treatment.")
@@ -490,6 +493,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _is_likely_spider_or_date_shorthand(token: str) -> bool:
+    """Returns True if token matches a known spider prefix, alias, or ISO date (LOW-01)."""
+    clean = token.strip().lower()
+    if clean in ("all", "dou", "federal_dou"):
+        return True
+    if clean.startswith(("state_", "federal_", "municipal_")):
+        return True
+    import re
+
+    return bool(re.match(r"^\d{4}-\d{2}-\d{2}$", clean))
+
+
 def parse_cli_args(args: list[str] | None = None) -> argparse.Namespace:
     """Pre-process CLI arguments and parse via ArgumentParser."""
     raw_args = list(sys.argv[1:]) if args is None else list(args)
@@ -498,10 +513,11 @@ def parse_cli_args(args: list[str] | None = None) -> argparse.Namespace:
     if not raw_args:
         raw_args = ["crawl"]
     elif raw_args[0] not in valid_commands:
-        if not raw_args[0].startswith("-"):
+        if raw_args[0].startswith("-"):
             raw_args = ["crawl"] + raw_args
-        else:
+        elif _is_likely_spider_or_date_shorthand(raw_args[0]):
             raw_args = ["crawl"] + raw_args
+        # Unrecognized commands remain untouched so ArgumentParser raises invalid choice error
 
     parser = build_parser()
     return parser.parse_args(raw_args)

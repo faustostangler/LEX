@@ -7,7 +7,6 @@ behavior specified in SPEC-001 (Section 4 Scenario 3).
 from unittest.mock import MagicMock
 
 import pytest
-from scrapy.exceptions import IgnoreRequest
 from scrapy.http import Request, Response
 from scrapy.spiders import Spider
 
@@ -47,9 +46,12 @@ class TestDomainCircuitBreakerMiddleware:
         middleware.process_response(req, resp_503, mock_spider)
         assert middleware.is_open("pesquisa.in.gov.br") is True
 
-        # Next request must be ignored
-        with pytest.raises(IgnoreRequest, match="Circuit breaker OPEN for domain"):
-            middleware.process_request(req, mock_spider)
+        # Next request must NOT be ignored/dropped; it must be deferred with lowered priority
+        orig_priority = req.priority
+        result = middleware.process_request(req, mock_spider)
+        assert req.priority == orig_priority - 10
+        assert req.dont_filter is True
+        assert result is not None  # Returns Deferred task
 
     def test_circuit_resets_on_success(self, mock_spider: Spider) -> None:
         """Scenario: 200 OK response resets error counter."""

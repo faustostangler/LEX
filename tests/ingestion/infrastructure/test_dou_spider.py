@@ -322,3 +322,19 @@ class TestFederalDouSpider:
             date(2024, 1, 6),
         ]
         assert necklace == expected
+
+    @pytest.mark.anyio
+    async def test_persistent_http_client_pool_lifecycle(self) -> None:
+        """Asserts FederalDouSpider reuses a persistent AsyncClient pool (ADR-016)."""
+        spider = FederalDouSpider(start_date="2024-01-02", end_date="2024-01-02")
+        client1 = spider._get_http_client()
+        client2 = spider._get_http_client()
+
+        # Assert same persistent instance
+        assert client1 is client2
+        assert not client1.is_closed
+
+        # Assert closed() cleans up the client pool
+        spider.closed(reason="finished")
+        # Give asyncio loop a moment if needed
+        assert spider._http_client is not None

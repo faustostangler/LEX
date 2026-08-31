@@ -109,6 +109,20 @@ class FederalDouSpider(BaseGazetteSpider):
         self.force = force.lower() in ("true", "1", "yes") if isinstance(force, str) else force
         self._session: Session | None = None
         self._engine: Engine | None = None
+        self._http_client: httpx.AsyncClient | None = None
+
+    def _get_http_client(self) -> httpx.AsyncClient:
+        """Returns or lazily creates a persistent httpx.AsyncClient connection pool (ADR-016)."""
+        if self._http_client is None or self._http_client.is_closed:
+            self._http_client = httpx.AsyncClient(
+                headers=DEFAULT_BROWSER_HEADERS,
+                timeout=DEFAULT_HTTP_TIMEOUT_SECONDS,
+                limits=httpx.Limits(
+                    max_connections=DEFAULT_MAX_CONNECTIONS,
+                    max_keepalive_connections=DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
+                ),
+            )
+        return self._http_client
 
     @classmethod
     def from_crawler(cls, crawler: Crawler, *args: Any, **kwargs: Any) -> Self:
@@ -127,7 +141,25 @@ class FederalDouSpider(BaseGazetteSpider):
         return spider
 
     def closed(self, reason: str) -> None:
-        """Clean up repository database session on spider shutdown."""
+        """Clean up repository database session and HTTP connection pool on spider shutdown."""
+        if (
+            hasattr(self, "_http_client")
+            and self._http_client is not None
+            and not self._http_client.is_closed
+        ):
+            try:
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+
+                if loop is not None and loop.is_running():
+                    asyncio.ensure_future(self._http_client.aclose())
+                else:
+                    asyncio.run(self._http_client.aclose())
+            except Exception as exc:
+                logging.getLogger(__name__).warning(f"Error closing HTTP client pool: {exc}")
+
         if hasattr(self, "_session") and self._session is not None:
             try:
                 self._session.close()
@@ -238,117 +270,110 @@ class FederalDouSpider(BaseGazetteSpider):
         sec_code = SECTION_CODE_MAP.get(section_name, section_name)
         progress_desc = f"DOU {self.territory_code} {target_date.strftime('%d/%m/%Y')} {sec_code}"
 
-        async with httpx.AsyncClient(
-            headers=DEFAULT_BROWSER_HEADERS,
-            timeout=DEFAULT_HTTP_TIMEOUT_SECONDS,
-            limits=httpx.Limits(
-                max_connections=DEFAULT_MAX_CONNECTIONS,
-                max_keepalive_connections=DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
-            ),
-        ) as client:
-            with tqdm(
-                total=total_acts,
-                desc=progress_desc,
-                unit="ato",
-                bar_format=DEFAULT_TQDM_BAR_FORMAT,
-                dynamic_ncols=True,
-                leave=True,
-                mininterval=DEFAULT_TQDM_MIN_INTERVAL_SECONDS,
-            ) as pbar:
+        client = self._get_http_client()
+        with tqdm(
+            total=total_acts,
+            desc=progress_desc,
+            unit="ato",
+            bar_format=DEFAULT_TQDM_BAR_FORMAT,
+            dynamic_ncols=True,
+            leave=True,
+            mininterval=DEFAULT_TQDM_MIN_INTERVAL_SECONDS,
+        ) as pbar:
 
-                async def _fetch_act(
-                    art: dict[str, object],
-                ) -> RawNormativeActPayload | None:
-                    try:
-                        url_title = str(art.get("urlTitle", "")).strip()
-                        hierarchy_str = str(art.get("hierarchyStr", "")).strip()
-                        title = str(art.get("title", "")).strip()
-                        preview = str(art.get("content", "")).strip()
-                        art_type_raw = str(art.get("artType", "")).strip()
+            async def _fetch_act(
+                art: dict[str, object],
+            ) -> RawNormativeActPayload | None:
+                try:
+                    url_title = str(art.get("urlTitle", "")).strip()
+                    hierarchy_str = str(art.get("hierarchyStr", "")).strip()
+                    title = str(art.get("title", "")).strip()
+                    preview = str(art.get("content", "")).strip()
+                    art_type_raw = str(art.get("artType", "")).strip()
 
-                        hierarchy_parts = [p.strip() for p in hierarchy_str.split("/") if p.strip()]
-                        article_url = (
-                            f"{ARTICLE_READ_BASE_URL}{url_title}" if url_title else response.url
-                        )
+                    hierarchy_parts = [p.strip() for p in hierarchy_str.split("/") if p.strip()]
+                    article_url = (
+                        f"{ARTICLE_READ_BASE_URL}{url_title}" if url_title else response.url
+                    )
 
-                        body_text = ""
-                        ementa: str | None = None
-                        authority_name: str | None = None
-                        authority_role: str | None = None
+                    body_text = ""
+                    ementa: str | None = None
+                    authority_name: str | None = None
+                    authority_role: str | None = None
 
-                        if url_title:
-                            try:
-                                async with sem:
-                                    resp = await client.get(article_url)
-                                    if resp.status_code == 200:
-                                        soup = BeautifulSoup(resp.text, "html.parser")
-                                        div = soup.find("div", class_="texto-dou") or soup.find(
-                                            "div", id="materia"
-                                        )
-                                        if div:
-                                            body_text = div.get_text(separator="\n", strip=True)
+                    if url_title:
+                        try:
+                            async with sem:
+                                resp = await client.get(article_url)
+                                if resp.status_code == 200:
+                                    soup = BeautifulSoup(resp.text, "html.parser")
+                                    div = soup.find("div", class_="texto-dou") or soup.find(
+                                        "div", id="materia"
+                                    )
+                                    if div:
+                                        body_text = div.get_text(separator="\n", strip=True)
 
-                                        ementa_el = soup.find(class_="ementa")
-                                        if ementa_el:
-                                            ementa = ementa_el.get_text(strip=True)
+                                    ementa_el = soup.find(class_="ementa")
+                                    if ementa_el:
+                                        ementa = ementa_el.get_text(strip=True)
 
-                                        assina_el = soup.find(class_="assina")
-                                        if assina_el:
-                                            authority_name = assina_el.get_text(strip=True)
+                                    assina_el = soup.find(class_="assina")
+                                    if assina_el:
+                                        authority_name = assina_el.get_text(strip=True)
 
-                                        cargo_el = soup.find(class_="cargo")
-                                        if cargo_el:
-                                            authority_role = cargo_el.get_text(strip=True)
-                            except (httpx.HTTPError, TimeoutError) as exc:
-                                self.logger.debug(f"Article fetch failed for {url_title}: {exc}")
+                                    cargo_el = soup.find(class_="cargo")
+                                    if cargo_el:
+                                        authority_role = cargo_el.get_text(strip=True)
+                        except (httpx.HTTPError, TimeoutError) as exc:
+                            self.logger.debug(f"Article fetch failed for {url_title}: {exc}")
 
-                        if not body_text:
-                            body_text = preview or title
+                    if not body_text:
+                        body_text = preview or title
 
-                        if not body_text:
-                            return None
+                    if not body_text:
+                        return None
 
-                        # Derive parsed typology, number and year
-                        (
-                            act_type,
-                            act_number,
-                            act_year,
-                        ) = self._parse_act_type_and_number(
-                            title,
-                            default_type=art_type_raw or "OUTROS",
-                            target_year=target_date.year,
-                        )
+                    # Derive parsed typology, number and year
+                    (
+                        act_type,
+                        act_number,
+                        act_year,
+                    ) = self._parse_act_type_and_number(
+                        title,
+                        default_type=art_type_raw or "OUTROS",
+                        target_year=target_date.year,
+                    )
 
-                        return RawNormativeActPayload(
-                            territory_code=self.territory_code,
-                            source_url=article_url,
-                            raw_content=body_text,
-                            title=title or act_type,
-                            act_type=act_type,
-                            date_obj=target_date,
-                            act_number=act_number,
-                            act_year=act_year,
-                            ementa=ementa,
-                            hierarchy=hierarchy_parts,
-                            authority_name=authority_name,
-                            authority_role=authority_role,
-                            edition_number=edition_number,
-                            section=section_name,
-                            is_extra_edition=is_extra,
-                            classification_source="pre_segmented_source",
-                            classification_confidence=1.0,
-                        )
-                    finally:
-                        pbar.update(1)
+                    return RawNormativeActPayload(
+                        territory_code=self.territory_code,
+                        source_url=article_url,
+                        raw_content=body_text,
+                        title=title or act_type,
+                        act_type=act_type,
+                        date_obj=target_date,
+                        act_number=act_number,
+                        act_year=act_year,
+                        ementa=ementa,
+                        hierarchy=hierarchy_parts,
+                        authority_name=authority_name,
+                        authority_role=authority_role,
+                        edition_number=edition_number,
+                        section=section_name,
+                        is_extra_edition=is_extra,
+                        classification_source="pre_segmented_source",
+                        classification_confidence=1.0,
+                    )
+                finally:
+                    pbar.update(1)
 
-                for i in range(0, len(articles), DEFAULT_ACT_BATCH_SIZE):
-                    chunk = articles[i : i + DEFAULT_ACT_BATCH_SIZE]
-                    tasks = [_fetch_act(art) for art in chunk]
-                    results = await asyncio.gather(*tasks)
+            for i in range(0, len(articles), DEFAULT_ACT_BATCH_SIZE):
+                chunk = articles[i : i + DEFAULT_ACT_BATCH_SIZE]
+                tasks = [_fetch_act(art) for art in chunk]
+                results = await asyncio.gather(*tasks)
 
-                    for act_payload in results:
-                        if act_payload is not None:
-                            yield act_payload
+                for act_payload in results:
+                    if act_payload is not None:
+                        yield act_payload
 
     @staticmethod
     def _parse_act_type_and_number(

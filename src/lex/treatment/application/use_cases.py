@@ -28,11 +28,13 @@ class ProcessNormativeActUseCase:
     def __init__(self, repository: TreatmentRepositoryPort) -> None:
         self._repository = repository
 
-    async def execute(self, act: NormativeAct) -> TreatmentResult:
+    async def execute(self, act: NormativeAct, auto_commit: bool = True) -> TreatmentResult:
         """Executes the appropriate processing track based on the act's nature.
 
         Args:
             act: The raw NormativeAct entity to treat.
+            auto_commit: Whether to commit changes immediately (True)
+                or stage in session buffer (False).
 
         Returns:
             A TreatmentResult summary indicating track and mutations count.
@@ -61,12 +63,13 @@ class ProcessNormativeActUseCase:
             )
 
             if mutations:
-                await self._repository.save_mutations(mutations)
+                await self._repository.save_mutations(mutations, auto_commit=auto_commit)
 
             await self._repository.update_normative_act_treatment(
                 act_id=act_id,
                 structured_content=ast.to_dict(),
                 metadata_json=None,
+                auto_commit=auto_commit,
             )
 
             return TreatmentResult(track="TRILHA_A", mutations_extracted=len(mutations))
@@ -78,6 +81,7 @@ class ProcessNormativeActUseCase:
             act_id=act_id,
             structured_content=None,
             metadata_json=entities if entities else None,
+            auto_commit=auto_commit,
         )
 
         return TreatmentResult(track="TRILHA_B", mutations_extracted=0)

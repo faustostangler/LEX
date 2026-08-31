@@ -86,9 +86,18 @@ class MutationExtractor:
         Returns:
             List of validated NormativeActMutation entities.
         """
-        resolved_target_id = target_act_id or uuid.uuid5(
-            uuid.NAMESPACE_DNS, f"{default_territory_id}:target_placeholder"
+        active_target_id = target_act_id
+        active_target_urn: str | None = None
+        active_target_title: str | None = None
+        active_target_type: str | None = None
+        active_target_number: str | None = None
+        active_target_year: int | None = None
+        pub_year = publication_date.value.year
+        fallback_target_urn = (
+            f"urn:lex:{default_territory_id.lower()}:federal:lei:{pub_year};placeholder"
         )
+        fallback_target_id = target_act_id or uuid.uuid5(uuid.NAMESPACE_DNS, fallback_target_urn)
+
         mutations: list[NormativeActMutation] = []
         lines = [line.strip() for line in raw_text.splitlines()]
 
@@ -116,7 +125,7 @@ class MutationExtractor:
                         )
                         mutations.append(
                             NormativeActMutation(
-                                target_act_id=resolved_target_id,
+                                target_act_id=active_target_id or fallback_target_id,
                                 target_node_path=CanonicalNodePath.from_string(node_path_str),
                                 author_act_id=author_act_id,
                                 mutation_type=MutationType.REVOGACAO_EXPRESSA,
@@ -126,6 +135,12 @@ class MutationExtractor:
                                 extraction_source="lc95_deterministic_regex",
                                 confidence_score=1.0,
                                 mutation_sha256=mut_hash,
+                                target_canonical_urn=active_target_urn or fallback_target_urn,
+                                target_title=active_target_title
+                                or f"Lei nº placeholder/{publication_date.value.year}",
+                                target_act_type=active_target_type or "LEI",
+                                target_act_number=active_target_number,
+                                target_act_year=active_target_year or publication_date.value.year,
                             )
                         )
                     continue
@@ -142,7 +157,7 @@ class MutationExtractor:
                     )
                     mutations.append(
                         NormativeActMutation(
-                            target_act_id=resolved_target_id,
+                            target_act_id=active_target_id or fallback_target_id,
                             target_node_path=CanonicalNodePath.from_string(art_code),
                             author_act_id=author_act_id,
                             mutation_type=MutationType.REVOGACAO_EXPRESSA,
@@ -152,18 +167,56 @@ class MutationExtractor:
                             extraction_source="lc95_deterministic_regex",
                             confidence_score=1.0,
                             mutation_sha256=mut_hash,
+                            target_canonical_urn=active_target_urn or fallback_target_urn,
+                            target_title=active_target_title
+                            or f"Lei nº placeholder/{publication_date.value.year}",
+                            target_act_type=active_target_type or "LEI",
+                            target_act_number=active_target_number,
+                            target_act_year=active_target_year or publication_date.value.year,
                         )
                     )
                     continue
 
             # 2. Check for alteration header
-            if RE_ALTERATION_HEADER.search(line):
+            m_alt = RE_ALTERATION_HEADER.search(line)
+            if m_alt:
                 in_alteration_block = True
                 current_art_code = None
                 current_par_code = None
+
+                target_type = m_alt.group(1).strip()
+                target_number = m_alt.group(2).strip() if m_alt.group(2) else "0"
+                target_year_str = m_alt.group(3)
+                target_year = (
+                    int(target_year_str) if target_year_str else publication_date.value.year
+                )
+
+                active_target_type = target_type
+                active_target_number = target_number
+                active_target_year = target_year
+                active_target_title = f"{target_type} nº {target_number}/{target_year}"
+
+                clean_type = target_type.lower().replace(" ", ".")
+                clean_num = target_number.replace(".", "")
+                jur = default_territory_id.lower()
+                active_target_urn = (
+                    f"urn:lex:{jur}:federal:{clean_type}:{target_year};{clean_num}"
+                )
+                active_target_id = target_act_id or uuid.uuid5(
+                    uuid.NAMESPACE_DNS, active_target_urn
+                )
                 continue
 
             if in_alteration_block:
+                eff_target_id = active_target_id or fallback_target_id
+                eff_target_urn = active_target_urn or fallback_target_urn
+                eff_target_title = (
+                    active_target_title or f"Lei nº placeholder/{publication_date.value.year}"
+                )
+                eff_target_type = active_target_type or "LEI"
+                eff_target_num = active_target_number
+                eff_target_year = active_target_year or publication_date.value.year
+
                 # Check for article anchor in quoted section
                 m_art = RE_QUOTED_ARTICLE.match(line)
                 if m_art:
@@ -178,7 +231,7 @@ class MutationExtractor:
                         mut_hash = DocumentHash.from_text(f"ALTERACAO_NR:{current_art_code}:{rest}")
                         mutations.append(
                             NormativeActMutation(
-                                target_act_id=resolved_target_id,
+                                target_act_id=eff_target_id,
                                 target_node_path=CanonicalNodePath.from_string(current_art_code),
                                 author_act_id=author_act_id,
                                 mutation_type=MutationType.ALTERACAO_NR,
@@ -188,6 +241,11 @@ class MutationExtractor:
                                 extraction_source="lc95_deterministic_regex",
                                 confidence_score=1.0,
                                 mutation_sha256=mut_hash,
+                                target_canonical_urn=eff_target_urn,
+                                target_title=eff_target_title,
+                                target_act_type=eff_target_type,
+                                target_act_number=eff_target_num,
+                                target_act_year=eff_target_year,
                             )
                         )
                     continue
@@ -211,7 +269,7 @@ class MutationExtractor:
                         mut_hash = DocumentHash.from_text(f"ALTERACAO_NR:{current_par_code}:{rest}")
                         mutations.append(
                             NormativeActMutation(
-                                target_act_id=resolved_target_id,
+                                target_act_id=eff_target_id,
                                 target_node_path=CanonicalNodePath.from_string(current_par_code),
                                 author_act_id=author_act_id,
                                 mutation_type=MutationType.ALTERACAO_NR,
@@ -221,6 +279,11 @@ class MutationExtractor:
                                 extraction_source="lc95_deterministic_regex",
                                 confidence_score=1.0,
                                 mutation_sha256=mut_hash,
+                                target_canonical_urn=eff_target_urn,
+                                target_title=eff_target_title,
+                                target_act_type=eff_target_type,
+                                target_act_number=eff_target_num,
+                                target_act_year=eff_target_year,
                             )
                         )
                     continue
@@ -239,7 +302,7 @@ class MutationExtractor:
                         mut_hash = DocumentHash.from_text(f"ALTERACAO_NR:{inc_code}:{rest}")
                         mutations.append(
                             NormativeActMutation(
-                                target_act_id=resolved_target_id,
+                                target_act_id=eff_target_id,
                                 target_node_path=CanonicalNodePath.from_string(inc_code),
                                 author_act_id=author_act_id,
                                 mutation_type=MutationType.ALTERACAO_NR,
@@ -249,6 +312,11 @@ class MutationExtractor:
                                 extraction_source="lc95_deterministic_regex",
                                 confidence_score=1.0,
                                 mutation_sha256=mut_hash,
+                                target_canonical_urn=eff_target_urn,
+                                target_title=eff_target_title,
+                                target_act_type=eff_target_type,
+                                target_act_number=eff_target_num,
+                                target_act_year=eff_target_year,
                             )
                         )
                     continue

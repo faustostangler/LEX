@@ -13,7 +13,9 @@ from lex.treatment.domain.entities import NormativeActMutation
 class TreatmentRepositoryPort(Protocol):
     """Port for persisting treated AST structures, NER entities, and mutations."""
 
-    async def save_mutations(self, mutations: list[NormativeActMutation]) -> None:
+    async def save_mutations(
+        self, mutations: list[NormativeActMutation], auto_commit: bool = True
+    ) -> None:
         """Appends extracted mutation deltas to the write model ledger."""
         ...
 
@@ -22,6 +24,7 @@ class TreatmentRepositoryPort(Protocol):
         act_id: UUID,
         structured_content: dict[str, Any] | None,
         metadata_json: dict[str, Any] | None,
+        auto_commit: bool = True,
     ) -> None:
         """Updates a NormativeAct row with its parsed AST or extracted NER metadata."""
         ...

@@ -193,3 +193,32 @@ class TestPureAstReducer:
         assert "redação atualizada em 2020" in inc1.text
         assert inc1.status == DispositivoStatus.MODIFIED_ACTIVE
         assert len(inc1.history) == 1
+
+    def test_xss_payload_sanitization_in_html_compilation(self) -> None:
+        """Scenario: Dangerous XSS scripts and HTML entities are escaped (CWE-79 / ADR-013)."""
+        xss_node = DispositivoNode(
+            node_path=CanonicalNodePath.from_string("art_1"),
+            node_type=DispositivoType.ARTIGO,
+            label='<script>alert("label")</script>',
+            text='Texto com <img src=x onerror=alert(1)> e "aspas".',
+        )
+        base_ast = ActAst(
+            act_id=uuid.uuid4(),
+            title='LEI Nº 1 <script>alert("title")</script>',
+            ementa='Ementa com <b onmouseover=alert("xss")>tag</b>',
+            nodes=[xss_node],
+        )
+
+        compiled = PureAstReducer.reduce(base_ast=base_ast, mutations=[])
+
+        # Assert no raw script or executable html tags remain in compiled HTML
+        assert "<script>" not in compiled.compiled_html
+        assert "</script>" not in compiled.compiled_html
+        assert "<img src=x" not in compiled.compiled_html
+        assert "<b onmouseover=" not in compiled.compiled_html
+
+        # Assert correctly escaped entities
+        assert "&lt;script&gt;alert(&quot;label&quot;)&lt;/script&gt;" in compiled.compiled_html
+        assert "&lt;script&gt;alert(&quot;title&quot;)&lt;/script&gt;" in compiled.compiled_html
+        assert "&lt;img src=x onerror=alert(1)&gt;" in compiled.compiled_html
+        assert "&lt;b onmouseover=alert(&quot;xss&quot;)&gt;" in compiled.compiled_html

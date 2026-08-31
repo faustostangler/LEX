@@ -72,12 +72,22 @@ class PostgresGazetteRepository(GazetteRepositoryPort):
                 ).returning(GazetteEditionModel.id)
                 persisted_id = self._session.execute(upsert_stmt).scalar_one()
             else:
+                edition_num_clause = (
+                    (GazetteEditionModel.edition_number == edition.edition_number)
+                    if edition.edition_number is not None
+                    else GazetteEditionModel.edition_number.is_(None)
+                )
+                section_clause = (
+                    (GazetteEditionModel.section == edition.section)
+                    if edition.section is not None
+                    else GazetteEditionModel.section.is_(None)
+                )
                 existing = self._session.execute(
                     select(GazetteEditionModel).where(
                         GazetteEditionModel.territory_id == edition.territory_id.code,
                         GazetteEditionModel.date == edition.date.value,
-                        GazetteEditionModel.edition_number == edition.edition_number,
-                        GazetteEditionModel.section == edition.section,
+                        edition_num_clause,
+                        section_clause,
                         GazetteEditionModel.is_extra_edition == edition.is_extra_edition,
                     )
                 ).scalar_one_or_none()
@@ -168,7 +178,7 @@ class PostgresGazetteRepository(GazetteRepositoryPort):
         )
         try:
             rows = self._session.execute(stmt).all()
-            return {(r[0], r[1]) for r in rows}
+            return {(r[0], r[1] or "") for r in rows}
         except Exception:
             self._session.rollback()
             raise

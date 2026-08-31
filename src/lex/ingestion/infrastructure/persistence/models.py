@@ -85,6 +85,7 @@ class GazetteEditionModel(Base):
             "section",
             "is_extra_edition",
             name="uq_gazette_edition_natural_key",
+            postgresql_nulls_not_distinct=True,
         ),
         Index("ix_gazette_editions_territory_date", "territory_id", "date"),
     )

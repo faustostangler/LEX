@@ -32,7 +32,9 @@ class InMemoryTreatmentRepository(TreatmentRepositoryPort):
         self.saved_mutations: list[NormativeActMutation] = []
         self.treatment_updates: dict[UUID, dict[str, Any]] = {}
 
-    async def save_mutations(self, mutations: list[NormativeActMutation]) -> None:
+    async def save_mutations(
+        self, mutations: list[NormativeActMutation], auto_commit: bool = True
+    ) -> None:
         self.saved_mutations.extend(mutations)
 
     async def update_normative_act_treatment(
@@ -40,6 +42,7 @@ class InMemoryTreatmentRepository(TreatmentRepositoryPort):
         act_id: UUID,
         structured_content: dict[str, Any] | None,
         metadata_json: dict[str, Any] | None,
+        auto_commit: bool = True,
     ) -> None:
         self.treatment_updates[act_id] = {
             "structured_content": structured_content,

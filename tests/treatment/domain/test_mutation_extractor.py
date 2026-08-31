@@ -53,6 +53,12 @@ class TestMutationExtractor:
         assert m1.effective_date == pub_date
         assert m1.confidence_score == 1.0
         assert m1.extraction_source == "lc95_deterministic_regex"
+        assert m1.target_act_type == "Lei"
+        assert m1.target_act_number == "10.000"
+        assert m1.target_act_year == 2010
+        assert m1.target_canonical_urn == "urn:lex:br:federal:lei:2010;10000"
+        expected_target_id = uuid.uuid5(uuid.NAMESPACE_DNS, "urn:lex:br:federal:lei:2010;10000")
+        assert m1.target_act_id == expected_target_id
 
         m2 = mutations[1]
         assert m2.mutation_type == MutationType.ALTERACAO_NR
@@ -60,6 +66,7 @@ class TestMutationExtractor:
         assert "desenvolvimento sustentável" in (m2.new_text or "")
         assert m2.confidence_score == 1.0
         assert m2.extraction_source == "lc95_deterministic_regex"
+        assert m2.target_act_id == expected_target_id
 
     def test_extract_express_revocations(self) -> None:
         """Asserts extraction of express revocation clauses."""

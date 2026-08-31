@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from lex.consolidation.application.ports import ConsolidationRepositoryPort
@@ -184,18 +185,15 @@ class PostgresConsolidationRepository(ConsolidationRepositoryPort):
         )
 
     def enqueue_backfill_task(self, task: LegislationBackfillTask) -> None:
-        """Enqueues or increments citation count of a missing statute in the JIT queue."""
+        """Enqueues or increments citation count of a missing statute atomically."""
+        bind = self._session.get_bind()
+        is_postgres = bind is not None and bind.dialect.name == "postgresql"
+        task_id = task.id or uuid.uuid4()
+        req_date = task.last_requested_at or datetime.now(UTC)
+
         try:
-            stmt = select(LegislationBackfillQueueModel).where(
-                LegislationBackfillQueueModel.canonical_urn == task.canonical_urn.value
-            )
-            existing = self._session.scalars(stmt).first()
-            if existing:
-                existing.citation_count += 1
-                existing.last_requested_at = datetime.now(UTC)
-            else:
-                task_id = task.id or uuid.uuid4()
-                model = LegislationBackfillQueueModel(
+            if is_postgres:
+                stmt = pg_insert(LegislationBackfillQueueModel).values(
                     id=task_id,
                     canonical_urn=task.canonical_urn.value,
                     territory_id=task.territory_id,
@@ -204,9 +202,38 @@ class PostgresConsolidationRepository(ConsolidationRepositoryPort):
                     act_year=task.act_year,
                     citation_count=task.citation_count,
                     status=task.status,
-                    last_requested_at=task.last_requested_at,
+                    last_requested_at=req_date,
                 )
-                self._session.add(model)
+                upsert_stmt = stmt.on_conflict_do_update(
+                    index_elements=["canonical_urn"],
+                    set_={
+                        "citation_count": LegislationBackfillQueueModel.citation_count
+                        + task.citation_count,
+                        "last_requested_at": stmt.excluded.last_requested_at,
+                    },
+                )
+                self._session.execute(upsert_stmt)
+            else:
+                stmt_select = select(LegislationBackfillQueueModel).where(
+                    LegislationBackfillQueueModel.canonical_urn == task.canonical_urn.value
+                )
+                existing = self._session.scalars(stmt_select).first()
+                if existing:
+                    existing.citation_count += task.citation_count
+                    existing.last_requested_at = req_date
+                else:
+                    model = LegislationBackfillQueueModel(
+                        id=task_id,
+                        canonical_urn=task.canonical_urn.value,
+                        territory_id=task.territory_id,
+                        act_type=task.act_type,
+                        act_number=task.act_number,
+                        act_year=task.act_year,
+                        citation_count=task.citation_count,
+                        status=task.status,
+                        last_requested_at=req_date,
+                    )
+                    self._session.add(model)
             self._session.commit()
         except Exception:
             self._session.rollback()

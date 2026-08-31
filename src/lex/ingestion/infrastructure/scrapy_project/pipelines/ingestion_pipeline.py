@@ -32,6 +32,24 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PIPELINE_BATCH_SIZE: int = 50
 
+BRAZILIAN_STATES: frozenset[str] = frozenset({
+    "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA",
+    "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN",
+    "RS", "RO", "RR", "SC", "SP", "SE", "TO",
+})
+
+
+def _infer_tier_from_territory(territory_code: str, explicit_tier: str | None = None) -> str:
+    """Infers federative tier ('federal', 'state', 'municipal') from territory code."""
+    if explicit_tier and explicit_tier.lower() in ("federal", "state", "municipal"):
+        return explicit_tier.lower()
+    code = territory_code.strip().upper()
+    if code == "BR":
+        return "federal"
+    if code in BRAZILIAN_STATES:
+        return "state"
+    return "municipal"
+
 
 class GazetteIngestionPipeline:
     """Scrapy pipeline routing payloads to DB with micro-batching (ADR-005)."""
@@ -125,9 +143,12 @@ class GazetteIngestionPipeline:
                     final_edition_id = existing_edition.id
                 else:
                     # Dynamically create container edition to ensure referential integrity
+                    synth_tier = _infer_tier_from_territory(
+                        item.territory_code, getattr(item, "tier", None)
+                    )
                     synth_payload = RawGazettePayload(
                         territory_code=item.territory_code,
-                        tier="federal",
+                        tier=synth_tier,
                         source_url=item.source_url,
                         raw_content=f"Auto-generated container ({item.date_obj})",
                         total_acts=0,

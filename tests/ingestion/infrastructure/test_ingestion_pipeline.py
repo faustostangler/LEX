@@ -205,6 +205,34 @@ class TestGazetteIngestionPipeline:
         assert len(repo.saved_acts) == 1
         assert repo.saved_acts[0].act_type == "PORTARIA"
 
+    def test_process_state_act_payload_creates_state_tier_synthetic_edition(self) -> None:
+        """Scenario: State act arriving without container creates state tier edition (MED-01)."""
+        repo = DummyRepository()
+        mapper = DummyMapper()
+        pipeline = GazetteIngestionPipeline(repository=repo, mapper=mapper)
+
+        spider = MagicMock(spec=Spider)
+        spider.name = "test_spider"
+
+        state_act_payload = RawNormativeActPayload(
+            territory_code="BA",
+            source_url="https://ioe.ba.gov.br/lei-1",
+            raw_content="Art. 1º Lei estadual da Bahia.",
+            title="LEI Nº 1",
+            act_type="LEI",
+            date_obj=date(2024, 1, 2),
+            section="secao_1",
+            edition_number="1",
+        )
+
+        pipeline.process_item(state_act_payload, spider)
+        pipeline.close_spider(spider)
+
+        assert len(repo.saved_editions) == 1
+        saved_edition = repo.saved_editions[0]
+        assert saved_edition.territory_id.code == "BA"
+        assert saved_edition.tier == FederativeTier.STATE
+
     def test_micro_batch_buffering_and_bulk_flush(self) -> None:
         """Scenario: Pipeline buffers acts up to batch_size and executes bulk save."""
         repo = DummyRepository()

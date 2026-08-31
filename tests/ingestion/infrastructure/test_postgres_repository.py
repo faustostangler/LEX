@@ -210,3 +210,43 @@ class TestPostgresGazetteRepository:
             (date(2024, 1, 2), "secao_1"),
             (date(2024, 1, 2), "secao_2"),
         }
+
+    def test_upsert_edition_with_null_section_and_edition_number_is_idempotent(
+        self, db_session: Session
+    ) -> None:
+        """Scenario: Upserting edition with None section/number is idempotent (ADR-012)."""
+        repo = PostgresGazetteRepository(session=db_session)
+        ed = make_test_edition(
+            territory_code="BA",
+            tier=FederativeTier.STATE,
+            pub_date=date(2024, 2, 10),
+            section=None,
+            total_acts=10,
+        )
+        ed = ed.model_copy(update={"edition_number": None})
+
+        res1 = repo.save(ed)
+        assert res1.id is not None
+
+        # Re-upsert with updated total_acts
+        ed_updated = ed.model_copy(update={"total_acts": 20})
+        res2 = repo.save(ed_updated)
+
+        assert res2.id == res1.id
+
+        # Assert only 1 row exists in database
+        from lex.ingestion.infrastructure.persistence.models import GazetteEditionModel
+
+        rows = db_session.query(GazetteEditionModel).all()
+        assert len(rows) == 1
+        assert rows[0].total_acts == 20
+        assert rows[0].section is None
+        assert rows[0].edition_number is None
+
+        # Assert completed map handles None as empty string
+        completed_map = repo.get_completed_editions_map(
+            territory_id=TerritoryId.from_code("BA"),
+            start_date=GazetteDate.from_date(date(2024, 2, 1)),
+            end_date=GazetteDate.from_date(date(2024, 2, 28)),
+        )
+        assert completed_map == {(date(2024, 2, 10), "")}

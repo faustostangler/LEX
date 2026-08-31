@@ -8,6 +8,7 @@ and generates pre-rendered LZ4 TOAST HTML/Markdown read models.
 """
 
 import hashlib
+import html
 import uuid
 from datetime import UTC, datetime
 
@@ -28,24 +29,26 @@ def _cascade_revocation(node: DispositivoNode) -> None:
 
 
 def _render_node_html(node: DispositivoNode) -> str:
-    """Renders a single AST provision node and its children into semantic HTML."""
+    """Renders a single AST provision node and its children into semantic HTML (CWE-79 safe)."""
     lines: list[str] = []
-    node_id = node.node_path.value
+    node_id = html.escape(node.node_path.value, quote=True)
+    escaped_label = html.escape(node.label or "")
+    escaped_text = html.escape(node.text or "")
 
     if node.status == DispositivoStatus.REVOKED:
         lines.append(
             f'<p id="{node_id}" class="dispositivo revogado">'
-            f"<strike>{node.label} {node.text}</strike></p>"
+            f"<strike>{escaped_label} {escaped_text}</strike></p>"
         )
     elif node.status == DispositivoStatus.MODIFIED_ACTIVE:
         lines.append(
             f'<p id="{node_id}" class="dispositivo modificado">'
-            f'<span class="vigente">{node.label} {node.text}</span></p>'
+            f'<span class="vigente">{escaped_label} {escaped_text}</span></p>'
         )
     else:
         lines.append(
             f'<p id="{node_id}" class="dispositivo original">'
-            f"<strong>{node.label}</strong> {node.text}</p>"
+            f"<strong>{escaped_label}</strong> {escaped_text}</p>"
         )
 
     for child in node.children:
@@ -152,12 +155,15 @@ class PureAstReducer:
         )
 
         # 5. Pre-render HTML and Markdown
+        escaped_act_id = html.escape(str(base_ast.act_id or ""), quote=True)
+        escaped_title = html.escape(working_ast.title or "")
         html_chunks: list[str] = [
-            f'<div class="normative-act-compiled" id="{base_ast.act_id or ""}">'
-            f"<h1>{working_ast.title}</h1>"
+            f'<div class="normative-act-compiled" id="{escaped_act_id}">',
+            f"<h1>{escaped_title}</h1>",
         ]
         if working_ast.ementa:
-            html_chunks.append(f'<p class="ementa"><em>{working_ast.ementa}</em></p>')
+            escaped_ementa = html.escape(working_ast.ementa)
+            html_chunks.append(f'<p class="ementa"><em>{escaped_ementa}</em></p>')
 
         md_chunks: list[str] = [f"# {working_ast.title}\n"]
         if working_ast.ementa:

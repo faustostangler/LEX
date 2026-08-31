@@ -57,6 +57,15 @@ def test_parse_cli_args_shorthand_routing() -> None:
     assert parsed_flag.start_date == "2024-01-02"
 
 
+def test_parse_cli_args_invalid_command_raises_system_exit() -> None:
+    """Scenario: Passing an invalid command raises SystemExit and does not crawl (LOW-01)."""
+    with pytest.raises(SystemExit):
+        parse_cli_args(["treate", "--date", "2024-01-02"])
+
+    with pytest.raises(SystemExit):
+        parse_cli_args(["unknown_cmd"])
+
+
 def test_cli_no_args_defaults_to_crawl_all_spiders() -> None:
     """Scenario: Invoking CLI with no arguments defaults to crawling all spiders descending."""
     with patch("lex.cli.run_crawler") as mock_run_crawler:
@@ -237,9 +246,7 @@ def test_run_treat_keyset_pagination(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with patch("lex.cli.ProcessNormativeActUseCase") as mock_use_case_cls:
         mock_instance = MagicMock()
-        mock_instance.execute = AsyncMock(
-            return_value=MagicMock(track="A", mutations_extracted=0)
-        )
+        mock_instance.execute = AsyncMock(return_value=MagicMock(track="A", mutations_extracted=0))
         mock_use_case_cls.return_value = mock_instance
 
         run_treat(force=True, limit=2)
@@ -311,6 +318,12 @@ def test_run_treat_handles_negative_catalog_statistics(
         def scalars(self, *args: Any, **kwargs: Any) -> Any:
             return self._real_session.scalars(*args, **kwargs)
 
+        def commit(self) -> None:
+            self._real_session.commit()
+
+        def rollback(self) -> None:
+            self._real_session.rollback()
+
         def close(self) -> None:
             self._real_session.close()
 
@@ -324,9 +337,7 @@ def test_run_treat_handles_negative_catalog_statistics(
 
     with patch("lex.cli.ProcessNormativeActUseCase") as mock_use_case_cls:
         mock_instance = MagicMock()
-        mock_instance.execute = AsyncMock(
-            return_value=MagicMock(track="A", mutations_extracted=0)
-        )
+        mock_instance.execute = AsyncMock(return_value=MagicMock(track="A", mutations_extracted=0))
         mock_use_case_cls.return_value = mock_instance
 
         run_treat(force=True, limit=None)
