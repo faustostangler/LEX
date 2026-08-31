@@ -1,7 +1,9 @@
 """FastAPI Router for Legislation Read Model Endpoints.
 
-Provides O(1) instantaneous access to compiled legislation, Stub handling,
-and on-demand time-travel queries.
+NOTE (ADR-009 / Status: PENDING_FUTURE_APPROVAL):
+Serves as an architectural baseline for compiled legislation and time-travel read models.
+Active REST API feature development and caching expansions are deferred pending explicit
+future phase approval.
 """
 
 from collections.abc import Generator
@@ -32,7 +34,7 @@ def get_db_session() -> Generator[Session, None, None]:
 
 
 @router.get("/{identifier}")
-async def get_compiled_legislation(
+def get_compiled_legislation(
     identifier: str,
     as_of: Annotated[
         date | None,
@@ -59,7 +61,7 @@ async def get_compiled_legislation(
     # 1. Check if the target is a Stub entity
     raw_act = session.get(NormativeActModel, act_uuid)
     if raw_act and raw_act.is_stub:
-        mutations = await repo.get_mutations_for_act(act_uuid)
+        mutations = repo.get_mutations_for_act(act_uuid)
         return {
             "status": "PENDING_BASE_INGESTION",
             "act_id": str(raw_act.id),
@@ -84,7 +86,7 @@ async def get_compiled_legislation(
     if as_of is not None and raw_act and raw_act.structured_content:
         base_ast = ActAst.from_dict(raw_act.structured_content)
         time_travel_case = TimeTravelCompilationUseCase(repository=repo)
-        compiled = await time_travel_case.execute(base_ast, as_of=as_of)
+        compiled = time_travel_case.execute(base_ast, as_of=as_of)
         return {
             "act_id": str(compiled.act_id),
             "canonical_urn": compiled.compiled_ast.canonical_urn,
@@ -98,7 +100,7 @@ async def get_compiled_legislation(
         }
 
     # 3. Retrieve pre-rendered compiled projection
-    compiled_act = await repo.get_compiled_act(act_uuid)
+    compiled_act = repo.get_compiled_act(act_uuid)
     if compiled_act:
         return {
             "act_id": str(compiled_act.act_id),
@@ -122,7 +124,7 @@ async def get_compiled_legislation(
     if raw_act and raw_act.structured_content:
         base_ast = ActAst.from_dict(raw_act.structured_content)
         compile_case = CompileNormativeActUseCase(repository=repo)
-        compiled_act = await compile_case.execute(base_ast)
+        compiled_act = compile_case.execute(base_ast)
         return {
             "act_id": str(compiled_act.act_id),
             "canonical_urn": compiled_act.compiled_ast.canonical_urn,

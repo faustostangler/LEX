@@ -9,6 +9,8 @@ from datetime import UTC, date, datetime
 from unittest.mock import MagicMock
 
 from scrapy import Spider
+from sqlalchemy import Engine
+from sqlalchemy.orm import Session
 
 from lex.ingestion.application.ports import StreamTextExtractorPort
 from lex.ingestion.domain.entities import GazetteEdition, NormativeAct
@@ -311,3 +313,45 @@ class TestGazetteIngestionPipeline:
         assert result == other_item
         assert len(repo.saved_editions) == 0
         assert len(repo.saved_acts) == 0
+
+    def test_close_spider_flushes_buffer_and_closes_session_without_disposing_engine(self) -> None:
+        """Scenario: close_spider flushes buffer and closes session without destroying engine."""
+        repo = DummyRepository()
+        mapper = DummyMapper()
+        mock_session = MagicMock(spec=Session)
+        mock_engine = MagicMock(spec=Engine)
+
+        pipeline = GazetteIngestionPipeline(
+            repository=repo,
+            mapper=mapper,
+            session=mock_session,
+            engine=mock_engine,
+            batch_size=10,
+        )
+
+        spider = MagicMock(spec=Spider)
+        spider.name = "spider_1"
+
+        # Buffer 1 act
+        act_payload = RawNormativeActPayload(
+            territory_code="BR",
+            source_url="https://www.in.gov.br/web/dou/-/act-shutdown",
+            raw_content="Conteúdo final",
+            title="PORTARIA FINAL",
+            act_type="PORTARIA",
+            date_obj=date(2024, 1, 2),
+            section="secao_1",
+            edition_number="1",
+        )
+        pipeline.process_item(act_payload, spider)
+        assert len(repo.saved_acts) == 0  # Still in buffer
+
+        # Trigger spider shutdown
+        pipeline.close_spider(spider)
+
+        # 1. Buffer flushed
+        assert len(repo.saved_acts) == 1
+        # 2. Session closed
+        mock_session.close.assert_called_once()
+        # 3. Engine NOT disposed (preserves multi-spider connection pools)
+        mock_engine.dispose.assert_not_called()

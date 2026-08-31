@@ -8,6 +8,7 @@ Supports Zero-Scrape Idempotent Early-Exit (ADR-004) to avoid re-scraping comple
 
 import asyncio
 import json
+import logging
 import re
 from collections.abc import AsyncIterator, Generator
 from datetime import date
@@ -37,6 +38,8 @@ from lex.ingestion.infrastructure.scrapy_project.spiders.base import (
     BaseGazetteSpider,
 )
 from lex.shared_kernel.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 # -----------------------------------------------------------------------------
 # Module Constants & Operational Defaults (ADR-003)
@@ -124,11 +127,12 @@ class FederalDouSpider(BaseGazetteSpider):
         return spider
 
     def closed(self, reason: str) -> None:
-        """Clean up repository database session and engine on spider shutdown."""
+        """Clean up repository database session on spider shutdown."""
         if hasattr(self, "_session") and self._session is not None:
-            self._session.close()
-        if hasattr(self, "_engine") and self._engine is not None:
-            self._engine.dispose()
+            try:
+                self._session.close()
+            except Exception as exc:
+                logging.getLogger(__name__).warning(f"Error closing spider session: {exc}")
 
     def start_requests(self) -> Generator[Request, None, None]:
         """Generate starting index requests for each configured DOU section and target date."""

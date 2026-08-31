@@ -125,9 +125,7 @@ class TestLegislationApi:
             revoked_articles_count=0,
             last_compiled_at=datetime.now(UTC),
         )
-        import anyio
-
-        anyio.run(consolidation_repo.save_compiled_act, compiled)
+        consolidation_repo.save_compiled_act(compiled)
 
         # Execute GET request
         response = client.get(f"/api/v1/legislation/{act_id}")

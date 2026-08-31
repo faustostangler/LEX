@@ -33,19 +33,32 @@ def _retry(self, request: Request, reason: str) -> Request | None:
 
 ---
 
-## 2. Explicit Connection Pool Disposal on Engine Teardown
+---
 
-### Vulnerability Identified (VULN-07 - P1)
-Spiders ([`dou_spider.py`](file:///home/stangler/Documents/Python/LEX/src/lex/ingestion/infrastructure/scrapy_project/spiders/federal/dou_spider.py)) and pipelines ([`ingestion_pipeline.py`](file:///home/stangler/Documents/Python/LEX/src/lex/ingestion/infrastructure/scrapy_project/pipelines/ingestion_pipeline.py)) created local `create_engine()` instances during `from_crawler` setup. While sessions were closed in shutdown hooks, `engine.dispose()` was omitted, retaining TCP connection pool descriptors and socket handles until Python garbage collection.
+## 2. Multi-Spider Database Connection Pool Lifecycle & Non-Disposal on Spider Close
+
+### Vulnerability Identified (VULN-05 - P1)
+When the command `lex crawl all` initiates multiple spiders inside a single `CrawlerProcess`, each spider and its associated `GazetteIngestionPipeline` shares or independently opens database sessions from SQLAlchemy connection pools. 
+
+Executing `self._engine.dispose()` inside individual spider/pipeline shutdown hooks (`close_spider` or spider `closed`) destroys the underlying connection pool immediately when the first spider terminates. Any concurrent or sequential spiders still in-flight will subsequently crash with `PoolClosedError` or `StatementError`.
 
 ### Remediated Architecture (SOTA-KISS)
-Spiders and pipelines must track `_engine` instances and explicitly dispose them during teardown:
+1. **Per-Spider Session Lifecycle**: In `close_spider` and spider `closed()` hooks, spiders and pipelines flush remaining buffers and close only their active `Session` (`self._session.close()`), returning database connections cleanly to the pool.
+2. **Engine Pool Preservation**: Individual spider shutdowns must **never** call `self._engine.dispose()`. Connection pools remain open for concurrent spiders and are safely reclaimed upon `CrawlerProcess` exit.
 
 ```python
-def closed(self, reason: str) -> None:
-    """Teardown hook disposing sessions and connection pools."""
-    if hasattr(self, "_session") and self._session is not None:
-        self._session.close()
-    if hasattr(self, "_engine") and self._engine is not None:
-        self._engine.dispose()
+# Ingestion Pipeline Shutdown Hook (GazetteIngestionPipeline)
+def close_spider(self, spider: Any = None) -> None:
+    """Flush any pending buffered acts and clean up database session on spider shutdown."""
+    self._flush_acts()
+    if self._session is not None:
+        try:
+            self._session.close()
+        except Exception as exc:
+            logger.warning(f"Error closing pipeline database session: {exc}")
+    # Note: Do NOT call self._engine.dispose() here to preserve multi-spider pools.
 ```
+
+### Invariants:
+1. **Never Dispose Shared Engines in `close_spider`**: Spiders and pipelines must only close transactional sessions.
+2. **Safe Session Cleanup**: Session closures must be wrapped in exception guards to prevent teardown crashes from masking crawl outcomes.

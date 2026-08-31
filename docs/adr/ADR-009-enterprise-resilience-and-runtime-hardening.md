@@ -44,7 +44,10 @@ A full system audit of the LEX ecosystem identified operational vulnerabilities,
 
 We will implement **Comprehensive Hexagonal & SRE Hardening (Option 2)** across all bounded contexts:
 
-### 4.1 FastAPI Session Lifecycle
+> [!NOTE]
+> **API & SRE Development Status**: Active feature development is currently centered on the Core Legislative Engine (CLI, scrapers, segmentation, treatment, and consolidation). All REST API specifications and SRE telemetry endpoints (Sections 4.1, 4.6, 4.7) serve as architectural reference baselines and draft specifications pending explicit future phase approval before production expansion.
+
+### 4.1 FastAPI Session Lifecycle (Reference Baseline / Pending Future Approval)
 All API session dependencies will use generator functions with strict `try...finally: session.close()` semantics, ensuring deterministic connection return to the connection pool upon request completion.
 
 ### 4.2 Non-Blocking Twisted Retry Scheduling
@@ -59,18 +62,37 @@ Batch processing in CLI treatment will utilize UUID cursor pagination (`Normativ
 ### 4.5 Multi-Tier LexML URN Formatting
 `generate_canonical_urn` will accept a `tier` parameter (`federal`, `estadual`, `municipal`) derived from `FederativeTier`.
 
+### 4.6 Synchronous Threadpool Dispatching for SQLAlchemy ORM Workloads
+FastAPI routes that execute synchronous database operations (e.g. `get_compiled_legislation`) and their underlying application use cases / persistence adapters (`ConsolidationRepositoryPort`, `PostgresConsolidationRepository`, `CompileNormativeActUseCase`, `TimeTravelCompilationUseCase`) are declared as pure synchronous `def` functions. This delegates request execution directly to Starlette's worker threadpool (`anyio.to_thread.run_sync`), completely eliminating event loop starvation on the main ASGI `asyncio` event loop.
+
+### 4.7 Centralized Exception Sanitization & RFC-7807 Compliance (CWE-209 Mitigation)
+All unhandled database (`SQLAlchemyError`) and infrastructure exceptions are intercepted by global exception handlers and a `TraceIdMiddleware`. Responses are sanitized into standardized RFC-7807 problem details payloads with diagnostic `trace_id` headers (`X-Trace-ID`), while raw stack traces and internal queries are securely routed to internal application logs (Sentry/Loki), strictly preventing information exposure.
+
+### 4.8 Multi-Spider Database Connection Pool Lifecycle in Crawlers
+In ingestion pipelines (`GazetteIngestionPipeline`) and spiders (`FederalDouSpider`), shutdown hooks (`close_spider`, `closed`) flush buffered entities and close active transactional `Session` instances without invoking `engine.dispose()`. This preserves connection pools for concurrent and sequential spiders running within a single `CrawlerProcess` (e.g. `lex crawl all`), eliminating premature pool destruction and `PoolClosedError`.
+
+### 4.9 ReDoS Prevention (CWE-1333 Mitigation) in Legislative Extraction Regexes
+In `MutationExtractor`, alteration header regex patterns eliminate nested overlapping whitespace quantifiers (`[\w\s]+` with `\s+`), replacing them with non-overlapping tokens (`[A-Za-zçãéíóú]+` and bounded digit patterns). This guarantees linear-time $O(N)$ evaluation and eliminates CPU starvation from catastrophic polynomial/exponential backtracking.
+
+### 4.10 PostgreSQL Catalog Statistics Non-Positive Tuple Bounds
+In CLI streaming treatment (`run_treat`), queries against `pg_class.reltuples` strictly enforce `est > 0` before assigning progress totals. Unanalyzed or vacuum-pending tables returning `-1` gracefully fall back to continuous streaming (`total_acts = None`), preventing invalid or corrupted CLI progress bars.
+
 ---
 
 ## 5. Consequences and Trade-offs
 
 ### Positive
 - API achieves enterprise-grade connection pool safety under high concurrent RPS.
+- Main ASGI `asyncio` event loop remains 100% non-blocking; database queries execute concurrently in worker threadpools.
+- Unhandled database and system failures are sanitized, preventing CWE-209 information disclosure and complying with LGPD.
+- Distributed tracing and SRE triage enabled via ubiquitous `trace_id` in response headers and RFC-7807 payloads.
 - Scrapy crawler maintains full asynchronous throughput across concurrent domains during rate-limiting.
 - CLI processing eliminates CPU-bound infinite loops and memory leaks.
 - URNs strictly conform to the Brazilian LexML/FRBR standard across all federative tiers.
 
 ### Negative / Operational Constraints
 - Developers must never instantiate database sessions in API routes without using `Depends(get_db_session)`.
+- Developers must never declare `async def` routes that perform synchronous SQLAlchemy ORM calls without offloading.
 - Custom Scrapy downloader middlewares must never call blocking standard library calls (`time.sleep`, `requests.get`).
 
 ---

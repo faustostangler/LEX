@@ -36,7 +36,7 @@ class PostgresConsolidationRepository(ConsolidationRepositoryPort):
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    async def save_mutation(self, mutation: NormativeActMutation) -> None:
+    def save_mutation(self, mutation: NormativeActMutation) -> None:
         """Appends a mutation delta to the Write Model ledger."""
         mut_id = mutation.id or uuid.uuid4()
         model = NormativeActMutationModel(
@@ -61,7 +61,7 @@ class PostgresConsolidationRepository(ConsolidationRepositoryPort):
             self._session.rollback()
             raise
 
-    async def get_mutations_for_act(self, target_act_id: UUID) -> list[NormativeActMutation]:
+    def get_mutations_for_act(self, target_act_id: UUID) -> list[NormativeActMutation]:
         """Fetches all mutations targeting a given statute, ordered chronologically."""
         stmt = (
             select(NormativeActMutationModel)
@@ -93,7 +93,7 @@ class PostgresConsolidationRepository(ConsolidationRepositoryPort):
             )
         return mutations
 
-    async def save_compiled_act(self, compiled_act: CompiledNormativeAct) -> None:
+    def save_compiled_act(self, compiled_act: CompiledNormativeAct) -> None:
         """Upserts a materialized compiled act projection in the read model."""
         try:
             existing = self._session.get(CompiledNormativeActModel, compiled_act.act_id)
@@ -127,7 +127,7 @@ class PostgresConsolidationRepository(ConsolidationRepositoryPort):
             self._session.rollback()
             raise
 
-    async def get_compiled_act(self, act_id: UUID) -> CompiledNormativeAct | None:
+    def get_compiled_act(self, act_id: UUID) -> CompiledNormativeAct | None:
         """Retrieves the current compiled act projection by statute UUID."""
         row = self._session.get(CompiledNormativeActModel, act_id)
         if not row:
@@ -147,7 +147,7 @@ class PostgresConsolidationRepository(ConsolidationRepositoryPort):
             last_compiled_at=row.last_compiled_at,
         )
 
-    async def get_compiled_act_by_urn(self, canonical_urn: str) -> CompiledNormativeAct | None:
+    def get_compiled_act_by_urn(self, canonical_urn: str) -> CompiledNormativeAct | None:
         """Retrieves the current compiled act projection by LexML URN."""
         bind = self._session.get_bind()
         is_postgres = bind is not None and bind.dialect.name == "postgresql"
@@ -183,7 +183,7 @@ class PostgresConsolidationRepository(ConsolidationRepositoryPort):
             last_compiled_at=row.last_compiled_at,
         )
 
-    async def enqueue_backfill_task(self, task: LegislationBackfillTask) -> None:
+    def enqueue_backfill_task(self, task: LegislationBackfillTask) -> None:
         """Enqueues or increments citation count of a missing statute in the JIT queue."""
         try:
             stmt = select(LegislationBackfillQueueModel).where(
@@ -212,7 +212,7 @@ class PostgresConsolidationRepository(ConsolidationRepositoryPort):
             self._session.rollback()
             raise
 
-    async def get_backfill_queue(self, limit: int = 20) -> list[LegislationBackfillTask]:
+    def get_backfill_queue(self, limit: int = 20) -> list[LegislationBackfillTask]:
         """Lists highest priority un-resolved backfill tasks."""
         stmt = (
             select(LegislationBackfillQueueModel)

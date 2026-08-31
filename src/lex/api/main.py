@@ -1,6 +1,9 @@
 """Main FastAPI Application Entrypoint for the LEX Ecosystem.
 
-Provides Swagger OpenAPI documentation, CORS, and dependency injection for REST routes.
+NOTE (ADR-009 / Status: PENDING_FUTURE_APPROVAL):
+The REST API presentation layer and associated SRE telemetry endpoints are currently in
+specification/baseline mode. Active production API feature development is deferred pending
+explicit phase approval.
 """
 
 from collections.abc import AsyncGenerator, Generator
@@ -11,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from lex.api.errors import TraceIdMiddleware, register_exception_handlers
 from lex.api.v1.legislation import get_db_session
 from lex.api.v1.legislation import router as legislation_router
 from lex.shared_kernel.config import get_settings
@@ -48,6 +52,10 @@ def create_app(session: Session | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(TraceIdMiddleware)
+
+    # Register centralized RFC-7807 sanitizing exception handlers
+    register_exception_handlers(app)
 
     if session is not None:
 

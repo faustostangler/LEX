@@ -16,11 +16,12 @@ from lex.treatment.domain.value_objects import (
     MutationType,
 )
 
-# Hoisted compiled regex constants
+# Hoisted compiled regex constants (ReDoS safe - CWE-1333 mitigation)
 RE_ALTERATION_HEADER = re.compile(
-    r"[Aa]rt\.\s*\d+[ºo]?\s+(?:O|A|Os|As)?\s*(Lei|Decreto|Medida\s+Provisória|Portaria|Resolução)"
+    r"[Aa]rt\.\s*\d+[ºo]?\s+(?:[OoAa]s?\s+)?(Lei|Decreto|Medida\s+Provisória|Portaria|Resolução)"
     r"(?:\s+Complementar)?\s+(?:n[ºo°\.]?\s*)?([\d\.]+)"
-    r"(?:[,\s/]+(?:de\s+)?(?:[\w\s]+(?:de\s+)?)?(\d{4}))?,?\s+passa[m]?\s+a\s+vigorar\s+com\s+a[s]?\s+seguinte[s]?\s+alteraç[ãõ]e[s]?:?",
+    r"(?:[,\s/]+(?:de\s+)?(?:\d{1,2}\s+de\s+[A-Za-zçãéíóú]+\s+de\s+|[A-Za-zçãéíóú]+\s+de\s+)?(\d{4}))?"
+    r",?\s+passa[m]?\s+a\s+vigorar\s*(?:com\s+a[s]?\s+seguinte[s]?\s+alteraç[ãõ]e[s]?)?:?",
     re.IGNORECASE,
 )
 

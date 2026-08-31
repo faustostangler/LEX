@@ -153,9 +153,14 @@ class GazetteIngestionPipeline:
         return item
 
     def close_spider(self, spider: Any = None) -> None:
-        """Flush any pending buffered acts and clean up database session on spider shutdown."""
+        """Flush any pending buffered acts and clean up database session on spider shutdown.
+
+        Note (ADR-009): Does not dispose self._engine to avoid premature connection pool
+        destruction during concurrent or sequential multi-spider runs in CrawlerProcess.
+        """
         self._flush_acts()
         if self._session is not None:
-            self._session.close()
-        if self._engine is not None:
-            self._engine.dispose()
+            try:
+                self._session.close()
+            except Exception as exc:
+                logger.warning(f"Error closing pipeline database session: {exc}")

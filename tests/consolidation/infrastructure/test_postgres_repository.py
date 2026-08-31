@@ -55,8 +55,7 @@ def db_session() -> Generator[Session, None, None]:
 class TestPostgresConsolidationRepository:
     """Test suite for PostgresConsolidationRepository."""
 
-    @pytest.mark.anyio
-    async def test_save_and_retrieve_mutations(self, db_session: Session) -> None:
+    def test_save_and_retrieve_mutations(self, db_session: Session) -> None:
         """Asserts saving and chronological retrieval of mutations."""
         gazette_repo = PostgresGazetteRepository(session=db_session)
         consolidation_repo = PostgresConsolidationRepository(session=db_session)
@@ -118,16 +117,15 @@ class TestPostgresConsolidationRepository:
             confidence_score=1.0,
             mutation_sha256=DocumentHash.from_text("hash"),
         )
-        await consolidation_repo.save_mutation(m)
+        consolidation_repo.save_mutation(m)
 
         # Retrieve
-        mutations = await consolidation_repo.get_mutations_for_act(target_act_id)
+        mutations = consolidation_repo.get_mutations_for_act(target_act_id)
         assert len(mutations) == 1
         assert mutations[0].target_node_path.value == "art_1"
         assert mutations[0].new_text == "Novo texto (NR)"
 
-    @pytest.mark.anyio
-    async def test_save_and_retrieve_compiled_act(self, db_session: Session) -> None:
+    def test_save_and_retrieve_compiled_act(self, db_session: Session) -> None:
         """Asserts saving and retrieving a compiled normative act."""
         gazette_repo = PostgresGazetteRepository(session=db_session)
         consolidation_repo = PostgresConsolidationRepository(session=db_session)
@@ -184,15 +182,14 @@ class TestPostgresConsolidationRepository:
             last_compiled_at=datetime.now(UTC),
         )
 
-        await consolidation_repo.save_compiled_act(compiled)
+        consolidation_repo.save_compiled_act(compiled)
 
-        retrieved = await consolidation_repo.get_compiled_act(act_id)
+        retrieved = consolidation_repo.get_compiled_act(act_id)
         assert retrieved is not None
         assert retrieved.compiled_version_hash == "a" * 64
         assert retrieved.compiled_html == "<h1>Lei 10000</h1>"
 
-    @pytest.mark.anyio
-    async def test_backfill_queue_priority(self, db_session: Session) -> None:
+    def test_backfill_queue_priority(self, db_session: Session) -> None:
         """Asserts enqueueing and citation count incrementing in backfill queue."""
         consolidation_repo = PostgresConsolidationRepository(session=db_session)
         urn = CanonicalUrn.from_string("urn:lex:br:federal:lei:1993;8666")
@@ -208,11 +205,11 @@ class TestPostgresConsolidationRepository:
         )
 
         # Enqueue once
-        await consolidation_repo.enqueue_backfill_task(task)
+        consolidation_repo.enqueue_backfill_task(task)
         # Enqueue second time -> increments citation count
-        await consolidation_repo.enqueue_backfill_task(task)
+        consolidation_repo.enqueue_backfill_task(task)
 
-        queue = await consolidation_repo.get_backfill_queue(limit=10)
+        queue = consolidation_repo.get_backfill_queue(limit=10)
         assert len(queue) == 1
         assert queue[0].canonical_urn == urn
         assert queue[0].citation_count == 2

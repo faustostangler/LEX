@@ -3,6 +3,7 @@
 Verifies default 'crawl' action, spider routing, --force flag, date options, and argument parsing.
 """
 
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -243,3 +244,93 @@ def test_run_treat_keyset_pagination(monkeypatch: pytest.MonkeyPatch) -> None:
 
         run_treat(force=True, limit=2)
         assert mock_instance.execute.call_count == 2
+
+
+def test_run_treat_handles_negative_catalog_statistics(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Scenario: Negative or non-positive reltuples from pg_class fallback to continuous stream."""
+    import uuid
+    from datetime import UTC, date, datetime
+    from unittest.mock import AsyncMock, MagicMock
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from lex.cli import run_treat
+    from lex.ingestion.infrastructure.persistence.models import Base, NormativeActModel
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine)
+
+    with session_factory() as session:
+        act = NormativeActModel(
+            id=uuid.uuid4(),
+            edition_id=uuid.uuid4(),
+            territory_id="BR",
+            date=date(2024, 1, 2),
+            section="secao_1",
+            edition_number="1",
+            is_extra_edition=False,
+            act_type="LEI",
+            title="Lei Teste",
+            canonical_urn="urn:lex:br:federal:lei:2024;1",
+            publication_nature="normativa_abstrata",
+            raw_content="Art. 1 Texto",
+            content_sha256="1" * 64,
+            char_count=20,
+            source_url="https://in.gov.br/1",
+            scraped_at=datetime.now(UTC),
+        )
+        session.add(act)
+        session.commit()
+
+    monkeypatch.setattr("lex.cli.create_engine", lambda *args, **kwargs: engine)
+
+    # Mock session dialect as postgresql returning -1 for reltuples (unanalyzed catalog state)
+    orig_session_factory = sessionmaker(bind=engine)
+
+    class MockSession:
+        def __init__(self) -> None:
+            self._real_session = orig_session_factory()
+            mock_bind = MagicMock()
+            mock_bind.dialect.name = "postgresql"
+            self.bind = mock_bind
+
+        def execute(self, *args: Any, **kwargs: Any) -> Any:
+            mock_res = MagicMock()
+            mock_res.scalar.return_value = -1  # Negative reltuples!
+            return mock_res
+
+        def scalars(self, *args: Any, **kwargs: Any) -> Any:
+            return self._real_session.scalars(*args, **kwargs)
+
+        def close(self) -> None:
+            self._real_session.close()
+
+        def __enter__(self) -> "MockSession":
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            self.close()
+
+    monkeypatch.setattr("lex.cli.sessionmaker", lambda *args, **kwargs: MockSession)
+
+    with patch("lex.cli.ProcessNormativeActUseCase") as mock_use_case_cls:
+        mock_instance = MagicMock()
+        mock_instance.execute = AsyncMock(
+            return_value=MagicMock(track="A", mutations_extracted=0)
+        )
+        mock_use_case_cls.return_value = mock_instance
+
+        run_treat(force=True, limit=None)
+        assert mock_instance.execute.call_count == 1
+
+    captured = capsys.readouterr()
+    assert "Processing Stage 2 treatment (continuous chunk stream)..." in captured.out

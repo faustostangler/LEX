@@ -94,3 +94,65 @@ class TestMutationExtractor:
             assert m.new_text is None
             assert m.confidence_score == 1.0
             assert m.extraction_source == "lc95_deterministic_regex"
+
+    def test_alteration_headers_date_variations(self) -> None:
+        """Scenario: Alteration headers with various date formats and phrasing are parsed."""
+        headers = [
+            (
+                "Art. 1º A Lei nº 10.000, de 10 de janeiro de 2010, passa a vigorar com as "
+                'seguintes alterações:\n"Art. 1º Teste (NR)"'
+            ),
+            'Art. 1º O Decreto nº 5.000, de 2021, passa a vigorar:\n"Art. 1º Teste (NR)"',
+            (
+                "Art. 1º A Medida Provisória nº 1.200/2024 passa a vigorar com as seguintes "
+                'alterações:\n"Art. 1º Teste (NR)"'
+            ),
+            (
+                "Art. 1º A Portaria nº 100 passa a vigorar com a seguinte alteração:\n"
+                '"Art. 1º Teste (NR)"'
+            ),
+            (
+                "Art. 1º A Lei Complementar nº 101, de 4 de maio de 2000, passa a vigorar:\n"
+                '"Art. 1º Teste (NR)"'
+            ),
+        ]
+        author_id = uuid.uuid4()
+        pub_date = GazetteDate.from_date(date(2024, 1, 1))
+
+        for header_text in headers:
+            mutations = MutationExtractor.extract_mutations(
+                raw_text=header_text,
+                author_act_id=author_id,
+                publication_date=pub_date,
+                effective_date=pub_date,
+                default_territory_id="BR",
+            )
+            assert len(mutations) == 1
+            assert mutations[0].mutation_type == MutationType.ALTERACAO_NR
+
+    def test_alteration_header_redos_resilience(self) -> None:
+        """Scenario: Malformed repetitive inputs do not cause ReDoS (CWE-1333)."""
+        import time
+
+        # Adversarial payload with nested repetitive words designed to trigger backtracking
+        adversarial_line = (
+            "Art. 1º A Lei nº 12.345 " + ("de janeiro de algo " * 40) + "passa a nao vigorar"
+        )
+        adversarial_text = f'{adversarial_line}\n"Art. 1º Conteudo (NR)"'
+
+        author_id = uuid.uuid4()
+        pub_date = GazetteDate.from_date(date(2024, 1, 1))
+
+        start_time = time.perf_counter()
+        mutations = MutationExtractor.extract_mutations(
+            raw_text=adversarial_text,
+            author_act_id=author_id,
+            publication_date=pub_date,
+            effective_date=pub_date,
+            default_territory_id="BR",
+        )
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+
+        # Execution must complete in linear time (< 50ms)
+        assert elapsed_ms < 50.0
+        assert len(mutations) == 0  # Header didn't match cleanly, skipped without ReDoS hang

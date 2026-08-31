@@ -225,6 +225,8 @@ def run_treat(
                     ).scalar()
                     if est is not None and est > 0:
                         total_acts = int(est)
+                    else:
+                        total_acts = None
                 except Exception:
                     total_acts = None
 
@@ -308,18 +310,14 @@ def run_compile(identifier: str) -> None:
             return
 
         base_ast = ActAst.from_dict(act_model.structured_content)
-
-        async def _compile() -> None:
-            compiled = await use_case.execute(base_ast)
-            print(f"Compiled act: {compiled.compiled_ast.title}")
-            print(f"Version hash: {compiled.compiled_version_hash}")
-            print(f"Total mutations applied: {compiled.total_mutations_applied}")
-            print(
-                f"Active articles: {compiled.active_articles_count} | "
-                f"Revoked articles: {compiled.revoked_articles_count}"
-            )
-
-        anyio.run(_compile)
+        compiled = use_case.execute(base_ast)
+        print(f"Compiled act: {compiled.compiled_ast.title}")
+        print(f"Version hash: {compiled.compiled_version_hash}")
+        print(f"Total mutations applied: {compiled.total_mutations_applied}")
+        print(
+            f"Active articles: {compiled.active_articles_count} | "
+            f"Revoked articles: {compiled.revoked_articles_count}"
+        )
 
 
 def run_query(identifier: str, as_of: str | None, output_format: str) -> None:
@@ -347,39 +345,36 @@ def run_query(identifier: str, as_of: str | None, output_format: str) -> None:
             print(f"Error: Act '{identifier}' not found in database.")
             return
 
-        async def _query() -> None:
-            compiled: CompiledNormativeAct | None = None
-            if as_of:
-                cutoff = date.fromisoformat(as_of)
-                if not act_model.structured_content:
-                    print("Error: Act structured content missing.")
-                    return
-                base_ast = ActAst.from_dict(act_model.structured_content)
-                tt_case = TimeTravelCompilationUseCase(repository=repo)
-                compiled = await tt_case.execute(base_ast, as_of=cutoff)
-            else:
-                compiled = await repo.get_compiled_act(act_model.id)
-                if not compiled and act_model.structured_content:
-                    base_ast = ActAst.from_dict(act_model.structured_content)
-                    c_case = CompileNormativeActUseCase(repository=repo)
-                    compiled = await c_case.execute(base_ast)
-
-            if not compiled:
-                print(f"Error: Could not retrieve compiled act for '{identifier}'.")
+        compiled: CompiledNormativeAct | None = None
+        if as_of:
+            cutoff = date.fromisoformat(as_of)
+            if not act_model.structured_content:
+                print("Error: Act structured content missing.")
                 return
+            base_ast = ActAst.from_dict(act_model.structured_content)
+            tt_case = TimeTravelCompilationUseCase(repository=repo)
+            compiled = tt_case.execute(base_ast, as_of=cutoff)
+        else:
+            compiled = repo.get_compiled_act(act_model.id)
+            if not compiled and act_model.structured_content:
+                base_ast = ActAst.from_dict(act_model.structured_content)
+                c_case = CompileNormativeActUseCase(repository=repo)
+                compiled = c_case.execute(base_ast)
 
-            if output_format == "html":
-                print(compiled.compiled_html)
-            elif output_format == "markdown":
-                print(compiled.compiled_markdown)
-            else:
-                print(f"=== {compiled.compiled_ast.title} ===")
-                if compiled.compiled_ast.ementa:
-                    print(f"Ementa: {compiled.compiled_ast.ementa}\n")
-                for n in compiled.compiled_ast.nodes:
-                    print(f"{n.label}: {n.text} [{n.status.value}]")
+        if not compiled:
+            print(f"Error: Could not retrieve compiled act for '{identifier}'.")
+            return
 
-        anyio.run(_query)
+        if output_format == "html":
+            print(compiled.compiled_html)
+        elif output_format == "markdown":
+            print(compiled.compiled_markdown)
+        else:
+            print(f"=== {compiled.compiled_ast.title} ===")
+            if compiled.compiled_ast.ementa:
+                print(f"Ementa: {compiled.compiled_ast.ementa}\n")
+            for n in compiled.compiled_ast.nodes:
+                print(f"{n.label}: {n.text} [{n.status.value}]")
 
 
 def build_parser() -> argparse.ArgumentParser:

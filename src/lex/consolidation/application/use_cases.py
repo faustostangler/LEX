@@ -18,7 +18,7 @@ class CompileNormativeActUseCase:
     def __init__(self, repository: ConsolidationRepositoryPort) -> None:
         self._repository = repository
 
-    async def execute(
+    def execute(
         self,
         base_ast: ActAst,
         mutations: list[NormativeActMutation] | None = None,
@@ -35,14 +35,14 @@ class CompileNormativeActUseCase:
         act_id = base_ast.act_id or uuid.uuid4()
         effective_mutations = mutations
         if effective_mutations is None:
-            effective_mutations = await self._repository.get_mutations_for_act(act_id)
+            effective_mutations = self._repository.get_mutations_for_act(act_id)
 
         compiled_act = PureAstReducer.reduce(
             base_ast=base_ast,
             mutations=effective_mutations,
         )
 
-        await self._repository.save_compiled_act(compiled_act)
+        self._repository.save_compiled_act(compiled_act)
         return compiled_act
 
 
@@ -52,7 +52,7 @@ class TimeTravelCompilationUseCase:
     def __init__(self, repository: ConsolidationRepositoryPort) -> None:
         self._repository = repository
 
-    async def execute(self, base_ast: ActAst, as_of: date) -> CompiledNormativeAct:
+    def execute(self, base_ast: ActAst, as_of: date) -> CompiledNormativeAct:
         """Compiles a statute's text as it stood on a specific historical date.
 
         Args:
@@ -63,7 +63,7 @@ class TimeTravelCompilationUseCase:
             A CompiledNormativeAct reflecting the statutory state on the requested date.
         """
         act_id = base_ast.act_id or uuid.uuid4()
-        all_mutations = await self._repository.get_mutations_for_act(act_id)
+        all_mutations = self._repository.get_mutations_for_act(act_id)
 
         # Filter mutations effective on or before the requested date
         historical_mutations = [m for m in all_mutations if m.effective_date.value <= as_of]
