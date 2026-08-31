@@ -466,3 +466,37 @@ class TestFederalDouSpider:
             )
             duration = time.perf_counter() - t0
             assert duration < 0.05, f"ReDoS detected! Evaluation took {duration:.4f}s"
+
+    @pytest.mark.anyio
+    async def test_parse_modern_section_skips_oversized_json_payload(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Scenario: JSON payloads exceeding MAX_JSON_PAYLOAD_BYTES are safely dropped (MED-03)."""
+        from scrapy.http import HtmlResponse, Request
+
+        spider = FederalDouSpider(start_date="2024-01-02", end_date="2024-01-02")
+        monkeypatch.setattr(
+            "lex.ingestion.infrastructure.scrapy_project.spiders.federal.dou_spider.MAX_JSON_PAYLOAD_BYTES",
+            100,  # 100 bytes limit for test
+        )
+
+        large_payload = " " * 200
+        html_content = (
+            '<html><body><script id="params" type="application/json">'
+            f'{{"jsonArray": [{large_payload}]}}'
+            "</script></body></html>"
+        )
+        request = Request(
+            url="https://in.gov.br/leiturajornal?secao=1&data=02-01-2024",
+            meta={"gazette_date": date(2024, 1, 2), "section_name": "secao_1"},
+        )
+        response = HtmlResponse(
+            url="https://in.gov.br/leiturajornal?secao=1&data=02-01-2024",
+            request=request,
+            body=html_content.encode("utf-8"),
+            encoding="utf-8",
+        )
+
+        results = [item async for item in spider.parse_modern_section(response)]
+        assert len(results) == 0

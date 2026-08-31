@@ -82,6 +82,7 @@ SECTION_CODE_MAP: dict[str, str] = {
 }
 
 # Hoisted compiled regex constants (ReDoS safe - CWE-1333 mitigation per ADR-009 §4.9)
+MAX_JSON_PAYLOAD_BYTES: int = 10 * 1024 * 1024  # 10 MB safety ceiling (CWE-20 mitigation)
 SCRIPT_PARAMS_PATTERN: re.Pattern[str] = re.compile(
     r'<script\b[^>]*\bid=["\']params["\'][^>]*>(.*?)</script>', re.DOTALL
 )
@@ -242,8 +243,16 @@ class FederalDouSpider(BaseGazetteSpider):
             )
             return
 
+        raw_json_str = script_match.group(1).strip()
+        if len(raw_json_str.encode("utf-8")) > MAX_JSON_PAYLOAD_BYTES:
+            self.logger.warning(
+                f"[SKIP] Script params excede limite ({MAX_JSON_PAYLOAD_BYTES}B) "
+                f"para DOU {section_name} em {target_date.isoformat()}."
+            )
+            return
+
         try:
-            params_data = json.loads(script_match.group(1).strip())
+            params_data = json.loads(raw_json_str)
         except (json.JSONDecodeError, ValueError):
             self.logger.debug(
                 f"[SKIP] Script corrompido para DOU {section_name} em {target_date.isoformat()}."
