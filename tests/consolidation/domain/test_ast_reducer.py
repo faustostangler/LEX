@@ -222,3 +222,34 @@ class TestPureAstReducer:
         assert "&lt;script&gt;alert(&quot;title&quot;)&lt;/script&gt;" in compiled.compiled_html
         assert "&lt;img src=x onerror=alert(1)&gt;" in compiled.compiled_html
         assert "&lt;b onmouseover=alert(&quot;xss&quot;)&gt;" in compiled.compiled_html
+
+    def test_deeply_nested_ast_recursion_limit_safe(self) -> None:
+        """Scenario: Deeply nested AST nodes render safely without RecursionError (MED-02)."""
+        root = DispositivoNode(
+            node_path=CanonicalNodePath.from_string("art_1"),
+            node_type=DispositivoType.ARTIGO,
+            label="Art. 1º",
+            text="Root",
+        )
+        curr = root
+        for i in range(120):
+            child = DispositivoNode(
+                node_path=CanonicalNodePath.from_string(f"art_1.par_{i + 1}"),
+                node_type=DispositivoType.PARAGRAFO,
+                label=f"§ {i + 1}º",
+                text=f"Nested text {i}",
+            )
+            curr.children.append(child)
+            curr = child
+
+        base_ast = ActAst(
+            act_id=uuid.uuid4(),
+            title="Lei Profunda",
+            ementa="Ementa profunda",
+            nodes=[root],
+        )
+
+        compiled = PureAstReducer.reduce(base_ast=base_ast, mutations=[])
+        assert compiled.compiled_html is not None
+        assert "Art. 1º" in compiled.compiled_html
+

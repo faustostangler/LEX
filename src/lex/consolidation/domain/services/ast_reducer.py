@@ -20,16 +20,28 @@ from lex.treatment.domain.value_objects import (
     MutationType,
 )
 
+MAX_AST_RECURSION_DEPTH: int = 100
 
-def _cascade_revocation(node: DispositivoNode) -> None:
-    """Recursively marks a provision node and all of its descendants as REVOKED."""
+
+def _cascade_revocation(
+    node: DispositivoNode,
+    depth: int = 0,
+    max_depth: int = MAX_AST_RECURSION_DEPTH,
+) -> None:
+    """Recursively marks a provision node and all descendants as REVOKED (CWE-674 safe)."""
+    if depth >= max_depth:
+        return
     node.status = DispositivoStatus.REVOKED
     for child in node.children:
-        _cascade_revocation(child)
+        _cascade_revocation(child, depth=depth + 1, max_depth=max_depth)
 
 
-def _render_node_html(node: DispositivoNode) -> str:
-    """Renders a single AST provision node and its children into semantic HTML (CWE-79 safe)."""
+def _render_node_html(
+    node: DispositivoNode,
+    depth: int = 0,
+    max_depth: int = MAX_AST_RECURSION_DEPTH,
+) -> str:
+    """Renders an AST provision node and its children into semantic HTML (CWE-674 safe)."""
     lines: list[str] = []
     node_id = html.escape(node.node_path.value, quote=True)
     escaped_label = html.escape(node.label or "")
@@ -51,22 +63,32 @@ def _render_node_html(node: DispositivoNode) -> str:
             f"<strong>{escaped_label}</strong> {escaped_text}</p>"
         )
 
-    for child in node.children:
-        lines.append(_render_node_html(child))
+    if depth < max_depth:
+        for child in node.children:
+            rendered_child = _render_node_html(child, depth=depth + 1, max_depth=max_depth)
+            if rendered_child:
+                lines.append(rendered_child)
 
     return "\n".join(lines)
 
 
-def _render_node_markdown(node: DispositivoNode) -> str:
-    """Renders an AST provision node and its children into standard Markdown."""
+def _render_node_markdown(
+    node: DispositivoNode,
+    depth: int = 0,
+    max_depth: int = MAX_AST_RECURSION_DEPTH,
+) -> str:
+    """Renders an AST provision node and its children into standard Markdown (CWE-674 safe)."""
     lines: list[str] = []
     if node.status == DispositivoStatus.REVOKED:
         lines.append(f"~~{node.label} {node.text}~~")
     else:
         lines.append(f"**{node.label}** {node.text}")
 
-    for child in node.children:
-        lines.append(_render_node_markdown(child))
+    if depth < max_depth:
+        for child in node.children:
+            rendered_child = _render_node_markdown(child, depth=depth + 1, max_depth=max_depth)
+            if rendered_child:
+                lines.append(rendered_child)
 
     return "\n".join(lines)
 
