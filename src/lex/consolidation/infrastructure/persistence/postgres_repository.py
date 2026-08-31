@@ -8,7 +8,7 @@ import uuid
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -149,7 +149,7 @@ class PostgresConsolidationRepository(ConsolidationRepositoryPort):
         )
 
     def get_compiled_act_by_urn(self, canonical_urn: str) -> CompiledNormativeAct | None:
-        """Retrieves the current compiled act projection by LexML URN."""
+        """Retrieves the current compiled act projection by LexML URN (CWE-400 resource-safe)."""
         bind = self._session.get_bind()
         is_postgres = bind is not None and bind.dialect.name == "postgresql"
 
@@ -160,12 +160,12 @@ class PostgresConsolidationRepository(ConsolidationRepositoryPort):
             )
             row = self._session.scalars(stmt).first()
         else:
-            stmt = select(CompiledNormativeActModel)
-            rows = self._session.scalars(stmt).all()
-            for r in rows:
-                if r.compiled_ast.get("canonical_urn") == canonical_urn:
-                    row = r
-                    break
+            # Hermetic test / SQLite fallback: execute JSON filter in SQL engine via json_extract
+            stmt = select(CompiledNormativeActModel).where(
+                func.json_extract(CompiledNormativeActModel.compiled_ast, "$.canonical_urn")
+                == canonical_urn
+            )
+            row = self._session.scalars(stmt).first()
 
         if not row:
             return None

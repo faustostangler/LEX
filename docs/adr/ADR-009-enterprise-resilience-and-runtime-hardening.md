@@ -77,6 +77,9 @@ In `MutationExtractor`, alteration header regex patterns eliminate nested overla
 ### 4.10 PostgreSQL Catalog Statistics Non-Positive Tuple Bounds
 In CLI streaming treatment (`run_treat`), queries against `pg_class.reltuples` strictly enforce `est > 0` before assigning progress totals. Unanalyzed or vacuum-pending tables returning `-1` gracefully fall back to continuous streaming (`total_acts = None`), preventing invalid or corrupted CLI progress bars.
 
+### 4.11 JSON SQL Engine Filtering for Non-PostgreSQL Adapters (CWE-400 Mitigation)
+In `PostgresConsolidationRepository.get_compiled_act_by_urn`, fallback lookups on non-PostgreSQL engines (such as hermetic SQLite test suites) execute `func.json_extract(CompiledNormativeActModel.compiled_ast, "$.canonical_urn") == canonical_urn` inside the database query engine rather than loading all table records into Python memory (`scalars(stmt).all()`). This enforces bounded $O(1)$ memory consumption and eliminates test suite out-of-memory crashes (CWE-400).
+
 ---
 
 ## 5. Consequences and Trade-offs

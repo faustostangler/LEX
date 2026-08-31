@@ -189,6 +189,19 @@ class TestPostgresConsolidationRepository:
         assert retrieved.compiled_version_hash == "a" * 64
         assert retrieved.compiled_html == "<h1>Lei 10000</h1>"
 
+        # Assert retrieval by LexML canonical URN via json_extract (CWE-400 resource-safe)
+        retrieved_by_urn = consolidation_repo.get_compiled_act_by_urn(
+            "urn:lex:br:federal:lei:2020;10000"
+        )
+        assert retrieved_by_urn is not None
+        assert retrieved_by_urn.act_id == act_id
+        assert retrieved_by_urn.compiled_html == "<h1>Lei 10000</h1>"
+
+        # Assert unknown URN returns None
+        assert (
+            consolidation_repo.get_compiled_act_by_urn("urn:lex:br:federal:lei:2099;99999") is None
+        )
+
     def test_backfill_queue_priority(self, db_session: Session) -> None:
         """Asserts enqueueing and citation count incrementing in backfill queue."""
         consolidation_repo = PostgresConsolidationRepository(session=db_session)
