@@ -87,12 +87,11 @@ To protect on-the-fly AST compilation endpoints (`/api/v1/legislation/{identifie
 - Environment Gating: Enforce `--no-serve` or require `LEX_ENVIRONMENT != production` for unauthenticated endpoints when starting `lex serve`.
 - Security Headers: Inject CSP (`Content-Security-Policy`), HSTS, and X-Content-Type-Options headers globally across all API responses.
 
-### 4.13 Centralized Database Engine Factory & Bounded CLI Connection Pools (CWE-400 / Pending Implementation)
-*Status: Architecture Planned / Pending Implementation (HIGH-05)*  
-To prevent `QueuePool` connection exhaustion during high-throughput CLI batch processing (`lex treat`, `lex compile`):
-- Singleton Factory: Centralize all `create_engine` invocations within a unified `lex.shared_kernel.database` factory.
-- Bounded Pool Configuration: Enforce explicit bounds across all CLI and daemon contexts (`pool_size=5`, `max_overflow=5`, `pool_pre_ping=True`, `pool_recycle=1800`).
-- Session Lifecycle Governance: Ensure deterministic session context cleanup across async batch loops (`anyio.run`).
+### 4.13 Centralized Database Engine Factory & Bounded CLI Connection Pools (CWE-400 Mitigation)
+All database engine instantiation across CLI commands (`init-db`, `treat`, `compile`, `query`) and infrastructure adapters is centralized in `lex.shared_kernel.database.get_engine` and `get_session_factory`:
+- Bounded Pool Configuration: Enforces explicit bounds on PostgreSQL QueuePool (`pool_size=5`, `max_overflow=5`, `pool_timeout=30`, `pool_recycle=1800`, `pool_pre_ping=True`).
+- Recycle Safety: 30-minute idle connection recycling (`pool_recycle=1800`) eliminates stale PostgreSQL disconnects after database-side connection timeouts (`pg_timeout`).
+- Multi-Dialect Compatibility: Transparently detects SQLite DSNs (used in test suites) to bypass unsupported pool bounds while preserving production PostgreSQL resilience.
 
 ---
 

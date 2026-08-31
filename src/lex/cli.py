@@ -13,8 +13,7 @@ import anyio
 import uvicorn
 from scrapy.crawler import CrawlerProcess
 from scrapy.utils.project import get_project_settings
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 
 from lex.consolidation.application.use_cases import (
     CompileNormativeActUseCase,
@@ -29,6 +28,7 @@ from lex.ingestion.infrastructure.persistence.postgres_repository import (
     PostgresGazetteRepository,
 )
 from lex.shared_kernel.config import get_settings
+from lex.shared_kernel.database import get_engine, get_session_factory
 from lex.treatment.application.use_cases import ProcessNormativeActUseCase
 from lex.treatment.domain.entities import ActAst
 from lex.treatment.infrastructure.persistence.postgres_repository import (
@@ -47,7 +47,7 @@ def init_db() -> None:
     """Initialize PostgreSQL schema and configure LZ4 TOAST compression on normative_acts."""
     settings = get_settings()
     print(f"Connecting to database: {settings.database_url}...")
-    engine = create_engine(str(settings.database_url), echo=False)
+    engine = get_engine(echo=False)
 
     print("Creating tables (gazette_editions, normative_acts, mutations, compiled_acts)...")
     Base.metadata.create_all(engine)
@@ -148,9 +148,7 @@ def run_treat(
         force: If True, re-processes acts even if already treated.
         only_failures: If True, only processes acts flagged as needing manual review.
     """
-    settings = get_settings()
-    engine = create_engine(str(settings.database_url), echo=False)
-    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+    session_factory = get_session_factory(expire_on_commit=False)
 
     with session_factory() as session:
         gazette_repo = PostgresGazetteRepository(session=session)
@@ -281,9 +279,7 @@ def run_treat(
 
 def run_compile(identifier: str) -> None:
     """Compiles a statute's base AST and accumulated mutations into a read model."""
-    settings = get_settings()
-    engine = create_engine(str(settings.database_url), echo=False)
-    session_factory = sessionmaker(bind=engine)
+    session_factory = get_session_factory()
 
     with session_factory() as session:
         from uuid import UUID
@@ -325,9 +321,7 @@ def run_compile(identifier: str) -> None:
 
 def run_query(identifier: str, as_of: str | None, output_format: str) -> None:
     """Queries compiled legislation text or performs on-demand time travel."""
-    settings = get_settings()
-    engine = create_engine(str(settings.database_url), echo=False)
-    session_factory = sessionmaker(bind=engine)
+    session_factory = get_session_factory()
 
     with session_factory() as session:
         from uuid import UUID

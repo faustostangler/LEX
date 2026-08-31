@@ -242,7 +242,7 @@ def test_run_treat_keyset_pagination(monkeypatch: pytest.MonkeyPatch) -> None:
             session.add(act)
         session.commit()
 
-    monkeypatch.setattr("lex.cli.create_engine", lambda *args, **kwargs: engine)
+    monkeypatch.setattr("lex.cli.get_session_factory", lambda **kwargs: session_factory)
 
     with patch("lex.cli.ProcessNormativeActUseCase") as mock_use_case_cls:
         mock_instance = MagicMock()
@@ -298,8 +298,6 @@ def test_run_treat_handles_negative_catalog_statistics(
         session.add(act)
         session.commit()
 
-    monkeypatch.setattr("lex.cli.create_engine", lambda *args, **kwargs: engine)
-
     # Mock session dialect as postgresql returning -1 for reltuples (unanalyzed catalog state)
     orig_session_factory = sessionmaker(bind=engine)
 
@@ -333,7 +331,7 @@ def test_run_treat_handles_negative_catalog_statistics(
         def __exit__(self, *args: Any) -> None:
             self.close()
 
-    monkeypatch.setattr("lex.cli.sessionmaker", lambda *args, **kwargs: MockSession)
+    monkeypatch.setattr("lex.cli.get_session_factory", lambda **kwargs: (lambda: MockSession()))
 
     with patch("lex.cli.ProcessNormativeActUseCase") as mock_use_case_cls:
         mock_instance = MagicMock()
