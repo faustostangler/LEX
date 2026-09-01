@@ -261,10 +261,20 @@ class TestPostgresGazetteRepository:
         index_names = {idx.name for idx in indices}
 
         assert "ix_normative_acts_pending_treatment" in index_names
+        assert "ix_normative_acts_pending_triage" in index_names
+        assert "ix_normative_acts_pending_treatment_sec" in index_names
+        assert "ix_normative_acts_pending_triage_sec" in index_names
         partial_idx = next(
             idx for idx in indices if idx.name == "ix_normative_acts_pending_treatment"
         )
         assert partial_idx.dialect_options["postgresql"]["where"] is not None
         assert "structured_content IS NULL" in str(
             partial_idx.dialect_options["postgresql"]["where"]
+        )
+        triage_idx = next(
+            idx for idx in indices if idx.name == "ix_normative_acts_pending_triage"
+        )
+        assert triage_idx.dialect_options["postgresql"]["where"] is not None
+        assert "triage_status" in str(
+            triage_idx.dialect_options["postgresql"]["where"]
         )

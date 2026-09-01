@@ -322,6 +322,9 @@ def test_run_treat_handles_negative_catalog_statistics(
         def rollback(self) -> None:
             self._real_session.rollback()
 
+        def expunge_all(self) -> None:
+            self._real_session.expunge_all()
+
         def close(self) -> None:
             self._real_session.close()
 

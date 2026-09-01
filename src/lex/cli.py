@@ -157,7 +157,7 @@ def run_treat(
 
         from uuid import UUID
 
-        from sqlalchemy import or_, select
+        from sqlalchemy import select
         from tqdm import tqdm
 
         from lex.shared_kernel.value_objects import PublicationNature
@@ -183,10 +183,14 @@ def run_treat(
             stmt = stmt.where(NormativeActModel.date == target_date)
 
         if only_failures:
-            stmt = stmt.where(
-                NormativeActModel.metadata_json["needs_manual_review"].as_boolean().is_(True)
-            )
-        elif not force:
+            pass_stmts = [
+                stmt.where(
+                    NormativeActModel.metadata_json["needs_manual_review"].as_boolean().is_(True)
+                )
+            ]
+        elif force:
+            pass_stmts = [stmt]
+        else:
             is_trilha_a = NormativeActModel.publication_nature.in_(
                 [
                     PublicationNature.NORMATIVA_ABSTRATA.value,
@@ -199,12 +203,11 @@ def run_treat(
                     PublicationNature.PUBLICIDADE_OPERACIONAL.value,
                 ]
             )
-            stmt = stmt.where(
-                or_(
-                    is_trilha_a & NormativeActModel.structured_content.is_(None),
-                    is_trilha_b & NormativeActModel.metadata_json["triage_status"].is_(None),
-                )
+            stmt_a = stmt.where(is_trilha_a, NormativeActModel.structured_content.is_(None))
+            stmt_b = stmt.where(
+                is_trilha_b, NormativeActModel.metadata_json["triage_status"].is_(None)
             )
+            pass_stmts = [stmt_a, stmt_b]
 
         CHUNK_SIZE = 500
 
@@ -215,16 +218,37 @@ def run_treat(
             is_postgres = session.bind is not None and session.bind.dialect.name == "postgresql"
             if is_postgres and not date_str and not territory and not section and not only_failures:
                 try:
-                    est = session.execute(
-                        text(
-                            "SELECT (reltuples::bigint) FROM pg_class "
-                            "WHERE relname = 'ix_normative_acts_pending_treatment'"
+                    if not force:
+                        est_a = session.execute(
+                            text(
+                                "SELECT (reltuples::bigint) FROM pg_class "
+                                "WHERE relname = 'ix_normative_acts_pending_treatment'"
+                            )
+                        ).scalar()
+                        est_b = session.execute(
+                            text(
+                                "SELECT (reltuples::bigint) FROM pg_class "
+                                "WHERE relname = 'ix_normative_acts_pending_triage'"
+                            )
+                        ).scalar()
+                        total_est = (int(est_a) if est_a is not None and est_a > 0 else 0) + (
+                            int(est_b) if est_b is not None and est_b > 0 else 0
                         )
-                    ).scalar()
-                    if est is not None and est > 0:
-                        total_acts = int(est)
+                        if total_est > 0:
+                            total_acts = total_est
+                        else:
+                            total_acts = None
                     else:
-                        total_acts = None
+                        est = session.execute(
+                            text(
+                                "SELECT (reltuples::bigint) FROM pg_class "
+                                "WHERE relname = 'normative_acts'"
+                            )
+                        ).scalar()
+                        if est is not None and est > 0:
+                            total_acts = int(est)
+                        else:
+                            total_acts = None
                 except Exception:
                     total_acts = None
 
@@ -235,44 +259,55 @@ def run_treat(
 
         async def _treat_all() -> None:
             processed = 0
-            last_seen_id: UUID | None = None
             with tqdm(total=total_acts, desc="Stage 2 Treatment", unit="act") as pbar:
-                while True:
-                    current_chunk_size = CHUNK_SIZE
-                    if limit is not None:
-                        remaining = limit - processed
-                        if remaining <= 0:
+                for pass_stmt in pass_stmts:
+                    last_seen_id: UUID | None = None
+                    while True:
+                        if limit is not None and processed >= limit:
                             break
-                        current_chunk_size = min(CHUNK_SIZE, remaining)
-
-                    chunk_stmt = stmt
-                    if last_seen_id is not None:
-                        chunk_stmt = chunk_stmt.where(NormativeActModel.id > last_seen_id)
-                    chunk_stmt = chunk_stmt.order_by(NormativeActModel.id.asc()).limit(
-                        current_chunk_size
-                    )
-
-                    models = session.scalars(chunk_stmt).all()
-                    if not models:
-                        break
-
-                    for m in models:
-                        last_seen_id = m.id
-                        domain_act = gazette_repo.to_domain_act(m)
-                        result = await use_case.execute(domain_act, auto_commit=False)
-                        processed += 1
-                        pbar.set_postfix(
-                            track=result.track,
-                            muts=result.mutations_extracted,
+                        current_chunk_size = (
+                            CHUNK_SIZE if limit is None else min(CHUNK_SIZE, limit - processed)
                         )
-                        pbar.update(1)
 
-                    # Single atomic commit per chunk of 500 items (ADR-015)
-                    try:
-                        session.commit()
-                    except Exception:
-                        session.rollback()
-                        raise
+                        # 1. Two-Step Keyset Scan: Fetch IDs only (Index-Only Scan, 0 TOAST I/O)
+                        id_stmt = pass_stmt.with_only_columns(NormativeActModel.id)
+                        if last_seen_id is not None:
+                            id_stmt = id_stmt.where(NormativeActModel.id > last_seen_id)
+                        id_stmt = id_stmt.order_by(NormativeActModel.id.asc()).limit(
+                            current_chunk_size
+                        )
+
+                        chunk_ids = session.scalars(id_stmt).all()
+                        if not chunk_ids:
+                            break
+
+                        # 2. Batch Hydrate exact chunk by Primary Key
+                        fetch_stmt = (
+                            select(NormativeActModel)
+                            .where(NormativeActModel.id.in_(chunk_ids))
+                            .order_by(NormativeActModel.id.asc())
+                        )
+                        models = session.scalars(fetch_stmt).all()
+
+                        for m in models:
+                            last_seen_id = m.id
+                            domain_act = gazette_repo.to_domain_act(m)
+                            result = await use_case.execute(domain_act, auto_commit=False)
+                            processed += 1
+                            pbar.set_postfix(
+                                track=result.track,
+                                muts=result.mutations_extracted,
+                            )
+                            pbar.update(1)
+
+                        # Single atomic commit per chunk of 500 items + expunge to prevent RAM bloat
+                        try:
+                            session.commit()
+                            if hasattr(session, "expunge_all"):
+                                session.expunge_all()
+                        except Exception:
+                            session.rollback()
+                            raise
 
             if processed == 0:
                 print("No pending acts found for Stage 2 treatment.")

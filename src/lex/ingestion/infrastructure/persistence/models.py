@@ -192,4 +192,38 @@ class NormativeActModel(Base):
             "id",
             postgresql_where=text("structured_content IS NULL"),
         ),
+        Index(
+            "ix_normative_acts_pending_triage",
+            "id",
+            postgresql_where=text("(metadata_json->>'triage_status') IS NULL"),
+        ),
+        Index(
+            "ix_normative_acts_pending_treatment_sec",
+            "section",
+            "id",
+            postgresql_where=text("structured_content IS NULL"),
+        ),
+        Index(
+            "ix_normative_acts_pending_triage_sec",
+            "section",
+            "id",
+            postgresql_where=text("(metadata_json->>'triage_status') IS NULL"),
+        ),
+        Index(
+            "ix_normative_acts_pending_triage_arrow",
+            "id",
+            postgresql_where=text(
+                "(metadata_json -> 'triage_status') IS NULL "
+                "AND publication_nature IN ('concreta_individual', 'publicidade_operacional')"
+            ),
+        ),
+        Index(
+            "ix_normative_acts_pending_triage_arrow_inc",
+            "id",
+            postgresql_include=["section"],
+            postgresql_where=text(
+                "(metadata_json -> 'triage_status') IS NULL "
+                "AND publication_nature IN ('concreta_individual', 'publicidade_operacional')"
+            ),
+        ),
     )
