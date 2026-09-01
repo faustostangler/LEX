@@ -16,6 +16,7 @@ from typing import Any, Self
 
 import httpx
 from bs4 import BeautifulSoup
+from pydantic import ValidationError
 from scrapy.crawler import Crawler
 from scrapy.http import HtmlResponse, Request, Response
 from sqlalchemy import Engine, create_engine
@@ -140,7 +141,7 @@ class FederalDouSpider(BaseGazetteSpider):
                 session_factory = sessionmaker(bind=spider._engine)
                 spider._session = session_factory()
                 spider.repository = PostgresGazetteRepository(session=spider._session)
-        except (SQLAlchemyError, OperationalError, OSError) as exc:
+        except (SQLAlchemyError, OperationalError, OSError, ValidationError, ValueError) as exc:
             logger.warning(
                 f"Failed to initialize database repository for spider '{spider.name}': {exc}. "
                 "Zero-scrape preflight map check will be disabled for this crawl session."

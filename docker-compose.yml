@@ -10,7 +10,7 @@ services:
                -c idle_in_transaction_session_timeout=60000
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-lex}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lex_secure_dev_password}
       POSTGRES_DB: ${POSTGRES_DB:-lex}
     ports:
       - "127.0.0.1:5432:5432"
